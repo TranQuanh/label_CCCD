@@ -1,8 +1,23 @@
+# CCCD Labeler - Requirements (Qwen2.5-VL-7B)
+# ============================================
+# Cài đặt:
+#   pip install -r requirements.txt
 
+# Core
 torch>=2.1.0
 torchvision>=0.16.0
 accelerate>=0.27.0
 Pillow>=10.0.0
 tqdm>=4.66.0
 
-qwen-vl-utils>=0.0.14
+# Qwen2.5-VL — cài thẳng từ PyPI, không cần source
+transformers>=4.49.0
+qwen-vl-utils>=0.0.8
+
+# Optional: tăng tốc inference ~30% (cần CUDA >= 11.8 và GCC)
+# pip install flash-attn --no-build-isolation
+
+# ── Nếu muốn dùng Qwen3-VL-8B thay vì Qwen2.5-VL-7B ──────────────────────
+# Cài transformers từ source:
+#   pip install git+https://github.com/huggingface/transformers
+# Rồi truyền: --model_name Qwen/Qwen3-VL-8B-Instruct

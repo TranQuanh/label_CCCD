@@ -1,21 +1,32 @@
 """
-CCCD Auto Labeler - Qwen3-VL-8B (Local)
-========================================
-Đọc ảnh CCCD, extract thông tin, xuất ra JSONL đúng format fine-tuning của Qwen3-VL.
+CCCD Auto Labeler - Qwen2.5-VL-7B (Local)
+==========================================
+Đọc ảnh CCCD → JSONL chuẩn format fine-tuning Qwen2.5-VL / Qwen3-VL.
 
-Format JSONL chuẩn cho Qwen3-VL fine-tuning (official qwen-vl-finetune):
-{
-  "image": "path/to/image.jpg",
-  "conversations": [
-    {"from": "human", "value": "<image>\n<prompt>"},
-    {"from": "gpt",   "value": "<answer JSON>"}
-  ]
-}
+Tính năng:
+  - Checkpoint tự động: lưu tiến độ sau mỗi ảnh, chạy lại tiếp từ chỗ dừng
+  - Hỗ trợ split train / test / valid hoặc trỏ thẳng vào folder bất kỳ
+  - Fallback an toàn nếu model parse JSON thất bại
+
+Format JSONL output (chuẩn qwen-vl-finetune):
+  {
+    "image": "path/to/image.jpg",
+    "conversations": [
+      {"from": "human", "value": "<image>\\n<prompt>"},
+      {"from": "gpt",   "value": "<JSON string>"}
+    ]
+  }
 
 Cách dùng:
   python label_cccd.py --split train --data_dir ./data --result_dir ./result
   python label_cccd.py --split all   --data_dir ./data --result_dir ./result
   python label_cccd.py --input_dir ./my_folder --result_dir ./result
+
+  # Đổi model (mặc định là Qwen2.5-VL-7B):
+  python label_cccd.py --split all --model_name Qwen/Qwen3-VL-8B-Instruct ...
+
+  # Chạy lại từ checkpoint (tự động, không cần flag thêm):
+  python label_cccd.py --split train --data_dir ./data --result_dir ./result
 """
 
 import os
@@ -41,7 +52,7 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Prompt dùng để inference (cũng là prompt trong conversations["human"])
+# Prompt
 # ─────────────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "Bạn là hệ thống OCR chuyên đọc Căn cước công dân (CCCD) Việt Nam. "
@@ -67,49 +78,94 @@ USER_PROMPT = (
     "}"
 )
 
-# Human value trong conversations: <image> tag PHẢI đứng đầu
 HUMAN_VALUE = f"<image>\n{USER_PROMPT}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Load model
+# Checkpoint helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def load_model(model_name: str = "Qwen/Qwen3-VL-8B-Instruct"):
-    logger.info(f"Loading: {model_name}")
-    logger.info("Lần đầu chạy sẽ download ~17GB, vui lòng chờ...")
+def checkpoint_path(result_dir: Path, split_name: str) -> Path:
+    """Trả về path file checkpoint cho 1 split."""
+    return result_dir / f".checkpoint_{split_name}.json"
 
+
+def load_checkpoint(ckpt_path: Path) -> set:
+    """
+    Đọc checkpoint: trả về set các image_name đã xử lý xong.
+    Checkpoint là dict: {"done": ["img1.jpg", "img2.jpg", ...]}
+    """
+    if not ckpt_path.exists():
+        return set()
     try:
-        from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
-        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_name,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto",
-            trust_remote_code=True,
-        )
-        model.eval()
-        logger.info("✓ Qwen3-VL-8B loaded!")
-        return model, processor
+        with open(ckpt_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        done = set(data.get("done", []))
+        logger.info(f"  [checkpoint] Đã có {len(done)} ảnh hoàn thành từ lần trước")
+        return done
+    except Exception as e:
+        logger.warning(f"  [checkpoint] Đọc lỗi ({e}), bắt đầu lại từ đầu")
+        return set()
 
-    except (ImportError, AttributeError):
-        logger.warning("⚠ transformers chưa có Qwen3VL → fallback Qwen2.5-VL-7B")
-        logger.warning("Fix: pip install git+https://github.com/huggingface/transformers")
-        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-        fb = "Qwen/Qwen2.5-VL-7B-Instruct"
-        processor = AutoProcessor.from_pretrained(fb, trust_remote_code=True)
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            fb,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto",
-            trust_remote_code=True,
-        )
-        model.eval()
-        logger.info("✓ Qwen2.5-VL-7B (fallback) loaded!")
-        return model, processor
+
+def save_checkpoint(ckpt_path: Path, done_names: set):
+    """Ghi checkpoint ngay sau mỗi ảnh hoàn thành."""
+    try:
+        with open(ckpt_path, "w", encoding="utf-8") as f:
+            json.dump({"done": sorted(done_names)}, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"  [checkpoint] Ghi lỗi: {e}")
+
+
+def clear_checkpoint(ckpt_path: Path):
+    """Xóa checkpoint khi split hoàn thành toàn bộ."""
+    if ckpt_path.exists():
+        ckpt_path.unlink()
+        logger.info(f"  [checkpoint] Đã xóa checkpoint (split hoàn tất)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Inference 1 ảnh → raw text
+# Load model - Qwen2.5-VL-7B mặc định, tự thử Qwen3-VL nếu truyền vào
+# ─────────────────────────────────────────────────────────────────────────────
+def load_model(model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"):
+    logger.info(f"Loading: {model_name}")
+    logger.info("Lần đầu chạy sẽ download model, vui lòng chờ...")
+
+    # Thử Qwen3-VL trước nếu user truyền model Qwen3
+    if "Qwen3" in model_name or "qwen3" in model_name.lower():
+        try:
+            from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+            processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+            model.eval()
+            logger.info(f"✓ Qwen3-VL loaded: {model_name}")
+            return model, processor
+        except (ImportError, AttributeError, OSError) as e:
+            logger.warning(f"⚠ Không load được Qwen3-VL ({e})")
+            logger.warning("  Fix: pip install git+https://github.com/huggingface/transformers")
+            logger.warning("  → Fallback sang Qwen2.5-VL-7B")
+            model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+
+    # Qwen2.5-VL (mặc định và fallback)
+    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    model.eval()
+    logger.info(f"✓ Qwen2.5-VL loaded: {model_name}")
+    return model, processor
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Inference 1 ảnh
 # ─────────────────────────────────────────────────────────────────────────────
 def infer_image(image_path: str, model, processor, max_new_tokens: int = 512) -> str:
     image = Image.open(image_path).convert("RGB")
@@ -154,7 +210,7 @@ def infer_image(image_path: str, model, processor, max_new_tokens: int = 512) ->
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parse JSON an toàn từ output model
+# Parse JSON từ output model
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_json_safe(text: str) -> Optional[dict]:
     text = text.strip()
@@ -176,37 +232,20 @@ def parse_json_safe(text: str) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Build record đúng format Qwen3-VL fine-tuning
+# Build record đúng format fine-tuning
 # ─────────────────────────────────────────────────────────────────────────────
 def build_training_record(image_path: str, gpt_answer: str) -> dict:
-    """
-    Format chuẩn theo qwen-vl-finetune/README.md:
-
-    {
-      "image": "path/to/image.jpg",          ← path tương đối hoặc tuyệt đối
-      "conversations": [
-        {"from": "human", "value": "<image>\\n<prompt>"},
-        {"from": "gpt",   "value": "<extracted JSON string>"}
-      ]
-    }
-    """
     return {
         "image": str(image_path),
         "conversations": [
-            {
-                "from": "human",
-                "value": HUMAN_VALUE,           # "<image>\n<prompt>" - bắt buộc có <image>
-            },
-            {
-                "from": "gpt",
-                "value": gpt_answer,            # JSON string (raw output của model)
-            },
+            {"from": "human", "value": HUMAN_VALUE},
+            {"from": "gpt",   "value": gpt_answer},
         ],
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Label toàn bộ 1 folder
+# Label 1 folder với checkpoint
 # ─────────────────────────────────────────────────────────────────────────────
 def label_folder(
     input_dir: Path,
@@ -215,79 +254,108 @@ def label_folder(
     model,
     processor,
     max_new_tokens: int = 512,
-    resume: bool = True,
+    reset: bool = False,
 ):
-    image_files = sorted([
+    """
+    Label toàn bộ ảnh trong input_dir.
+    Checkpoint lưu sau MỖI ảnh → chạy lại không bị mất tiến độ.
+
+    Args:
+        reset: Nếu True → xóa checkpoint cũ, label lại từ đầu.
+    """
+    split_name = input_dir.name
+    ckpt_path = checkpoint_path(result_dir, split_name)
+    output_path = result_dir / output_filename
+
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    # Xử lý reset
+    if reset:
+        if ckpt_path.exists():
+            ckpt_path.unlink()
+            logger.info(f"[{split_name}] Reset: đã xóa checkpoint cũ")
+        if output_path.exists():
+            output_path.unlink()
+            logger.info(f"[{split_name}] Reset: đã xóa output cũ")
+
+    # Load checkpoint
+    done_names = load_checkpoint(ckpt_path)
+
+    # Collect ảnh
+    all_images = sorted([
         p for p in input_dir.iterdir()
         if p.suffix.lower() in IMAGE_EXTENSIONS
     ])
-    logger.info(f"[{input_dir.name}] {len(image_files)} ảnh tìm thấy")
+    logger.info(f"[{split_name}] Tổng ảnh: {len(all_images)}")
 
-    if not image_files:
-        logger.warning(f"[{input_dir.name}] Không có ảnh!")
+    if not all_images:
+        logger.warning(f"[{split_name}] Không có ảnh!")
         return 0
 
-    result_dir.mkdir(parents=True, exist_ok=True)
-    output_path = result_dir / output_filename
+    # Lọc ảnh chưa xử lý
+    todo = [p for p in all_images if p.name not in done_names]
+    skipped = len(all_images) - len(todo)
 
-    # Resume: đọc image name đã xử lý
-    done_names = set()
-    if resume and output_path.exists():
-        with open(output_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    rec = json.loads(line)
-                    done_names.add(Path(rec.get("image", "")).name)
-                except Exception:
-                    pass
-        if done_names:
-            logger.info(f"[{input_dir.name}] Resume: bỏ qua {len(done_names)} ảnh đã có")
-
-    todo = [p for p in image_files if p.name not in done_names]
-    logger.info(f"[{input_dir.name}] Còn lại: {len(todo)} ảnh cần label")
+    if skipped > 0:
+        logger.info(f"[{split_name}] ✓ Bỏ qua {skipped} ảnh (đã có checkpoint)")
+    logger.info(f"[{split_name}] Cần label: {len(todo)} ảnh")
 
     if not todo:
-        logger.info(f"[{input_dir.name}] Tất cả đã label!")
+        logger.info(f"[{split_name}] Tất cả đã hoàn thành!")
         return 0
 
+    # Mở file output (append nếu đang resume)
+    write_mode = "a" if output_path.exists() else "w"
     success = errors = parse_fail = 0
-    write_mode = "a" if (resume and output_path.exists()) else "w"
 
     with open(output_path, write_mode, encoding="utf-8") as f_out:
-        for img_path in tqdm(todo, desc=f"  [{input_dir.name}]"):
+        for img_path in tqdm(todo, desc=f"  [{split_name}]", unit="img"):
             try:
                 raw = infer_image(str(img_path), model, processor, max_new_tokens)
                 parsed = parse_json_safe(raw)
 
-                # Gpt answer: nếu parse được → dùng JSON đẹp; nếu không → giữ raw
                 if parsed is not None:
                     gpt_answer = json.dumps(parsed, ensure_ascii=False)
                     success += 1
                 else:
-                    # Vẫn lưu raw, đánh dấu parse_fail để review sau
                     gpt_answer = raw
                     parse_fail += 1
-                    logger.warning(f"  parse_fail: {img_path.name} | raw: {raw[:80]}...")
+                    logger.warning(f"  parse_fail: {img_path.name} | {raw[:60]}...")
 
                 record = build_training_record(str(img_path), gpt_answer)
-
-                # Thêm metadata debug vào field riêng (không ảnh hưởng training)
                 record["_meta"] = {
                     "parse_ok": parsed is not None,
                     "raw_output": raw,
                 }
 
+                # Ghi record vào JSONL
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
-                f_out.flush()
+                f_out.flush()  # flush ngay để không mất data khi ngắt
+
+                # ── Lưu checkpoint sau mỗi ảnh ──
+                done_names.add(img_path.name)
+                save_checkpoint(ckpt_path, done_names)
+
+            except KeyboardInterrupt:
+                # Ctrl+C: lưu checkpoint trước khi thoát
+                logger.warning(f"\n[{split_name}] Bị ngắt! Đã lưu checkpoint ({len(done_names)} ảnh)")
+                raise
 
             except Exception as e:
                 logger.error(f"  ERROR {img_path.name}: {e}")
                 errors += 1
+                # Vẫn lưu checkpoint với ảnh lỗi (bỏ qua lần sau)
+                done_names.add(img_path.name)
+                save_checkpoint(ckpt_path, done_names)
+
+    # Xóa checkpoint khi split hoàn tất hoàn toàn
+    if len(done_names) >= len(all_images):
+        clear_checkpoint(ckpt_path)
 
     total = success + parse_fail
     logger.info(
-        f"[{input_dir.name}] DONE → {output_filename} | "
-        f"✓ JSON ok: {success} | parse_fail: {parse_fail} | error: {errors}"
+        f"[{split_name}] DONE → {output_filename} | "
+        f"✓ {success} | parse_fail: {parse_fail} | error: {errors} | tổng: {total}"
     )
     return total
 
@@ -297,15 +365,27 @@ def label_folder(
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description="CCCD Auto Labeler → Qwen3-VL fine-tuning JSONL",
+        description="CCCD Auto Labeler → JSONL fine-tuning (Qwen2.5-VL-7B)",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""
 Ví dụ:
+  # Label split train (tự resume nếu đã chạy dở)
   python label_cccd.py --split train --data_dir ./data --result_dir ./result
-  python label_cccd.py --split all   --data_dir ./data --result_dir ./result
+
+  # Label tất cả splits
+  python label_cccd.py --split all --data_dir ./data --result_dir ./result
+
+  # Trỏ thẳng vào folder bất kỳ
   python label_cccd.py --input_dir ./my_folder --result_dir ./result
-  python label_cccd.py --split all   --model_name ./models/Qwen3-VL-8B-Instruct \\
-                       --data_dir ./data --result_dir ./result
+
+  # Dùng model local đã tải về
+  python label_cccd.py --split all --model_name ./models/Qwen2.5-VL-7B-Instruct ...
+
+  # Đổi sang Qwen3-VL-8B (nếu server đủ mạnh)
+  python label_cccd.py --split all --model_name Qwen/Qwen3-VL-8B-Instruct ...
+
+  # Reset checkpoint, label lại từ đầu
+  python label_cccd.py --split train --reset ...
         """,
     )
 
@@ -313,26 +393,37 @@ Ví dụ:
     g = parser.add_argument_group("Nguồn ảnh (chọn 1)")
     g.add_argument(
         "--split", choices=["train", "test", "valid", "all"],
-        help="Chọn split. Dùng với --data_dir",
+        help="Split cần label. Dùng với --data_dir",
     )
-    g.add_argument("--data_dir", default="./data",
-                   help="Root folder chứa train/test/valid (default: ./data)")
-    g.add_argument("--input_dir",
-                   help="Trỏ thẳng vào 1 folder bất kỳ")
+    g.add_argument(
+        "--data_dir", default="./data",
+        help="Root folder chứa train/test/valid (default: ./data)",
+    )
+    g.add_argument(
+        "--input_dir",
+        help="Trỏ thẳng vào 1 folder bất kỳ (bỏ qua --split / --data_dir)",
+    )
 
     # Output
-    parser.add_argument("--result_dir", default="./result",
-                        help="Folder lưu JSONL output (default: ./result)")
+    parser.add_argument(
+        "--result_dir", default="./result",
+        help="Folder lưu JSONL output và checkpoint (default: ./result)",
+    )
 
     # Model
-    parser.add_argument("--model_name", default="Qwen/Qwen3-VL-8B-Instruct",
-                        help="HuggingFace ID hoặc path local model")
+    parser.add_argument(
+        "--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct",
+        help="HuggingFace ID hoặc path local (default: Qwen/Qwen2.5-VL-7B-Instruct)",
+    )
     parser.add_argument("--max_new_tokens", type=int, default=512)
-    parser.add_argument("--no_resume", action="store_true",
-                        help="Ghi đè file output (không resume)")
+
+    # Checkpoint control
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="Xóa checkpoint và output cũ, label lại từ đầu",
+    )
 
     args = parser.parse_args()
-    resume = not args.no_resume
 
     # Xác định tasks
     tasks = []  # (input_dir, output_filename)
@@ -363,28 +454,38 @@ Ví dụ:
     result_dir = Path(args.result_dir)
 
     logger.info(f"\n{'='*60}")
-    logger.info(f"Model  : {args.model_name}")
-    logger.info(f"Output : {result_dir}/")
+    logger.info(f"Model     : {args.model_name}")
+    logger.info(f"Output    : {result_dir}/")
+    logger.info(f"Checkpoint: {result_dir}/.checkpoint_<split>.json")
+    logger.info(f"Reset     : {args.reset}")
     for folder, fname in tasks:
         logger.info(f"  {folder.name:10s} → {fname}")
     logger.info(f"{'='*60}\n")
 
+    # Load model (1 lần duy nhất cho tất cả splits)
     model, processor = load_model(args.model_name)
 
+    # Chạy từng split
     for input_dir, output_filename in tasks:
-        logger.info(f"\n── {input_dir} ──")
-        label_folder(
-            input_dir=input_dir,
-            result_dir=result_dir,
-            output_filename=output_filename,
-            model=model,
-            processor=processor,
-            max_new_tokens=args.max_new_tokens,
-            resume=resume,
-        )
+        logger.info(f"\n{'─'*40}")
+        logger.info(f"Split: {input_dir}")
+        try:
+            label_folder(
+                input_dir=input_dir,
+                result_dir=result_dir,
+                output_filename=output_filename,
+                model=model,
+                processor=processor,
+                max_new_tokens=args.max_new_tokens,
+                reset=args.reset,
+            )
+        except KeyboardInterrupt:
+            logger.warning("\nDừng theo yêu cầu. Checkpoint đã được lưu.")
+            logger.warning("Chạy lại cùng lệnh để tiếp tục từ chỗ dừng.")
+            break
 
     logger.info(f"\n{'='*60}")
-    logger.info(f"HOÀN THÀNH! Kết quả trong: {result_dir}/")
+    logger.info(f"KẾT QUẢ trong: {result_dir}/")
     for _, fname in tasks:
         out = result_dir / fname
         if out.exists():
