@@ -1,23 +1,35 @@
-# CCCD Labeler - Requirements (Qwen2.5-VL-7B)
-# ============================================
-# Cài đặt:
+# CCCD VLM Extraction
+# ==========================================
+#   Gán nhãn (ground truth): Qwen2.5-VL-7B-Instruct
+#   Fine-tune / Deploy      : Qwen3-VL-8B-Instruct  (QLoRA 4-bit)
 #   pip install -r requirements.txt
 
-# Core
+# ── Core ─────────────────────────────────────────────────────────────────
 torch>=2.1.0
 torchvision>=0.16.0
 accelerate>=0.27.0
 Pillow>=10.0.0
 tqdm>=4.66.0
 
-# Qwen2.5-VL — cài thẳng từ PyPI, không cần source
+# ── Transformers + Qwen-VL ───────────────────────────────────────────────
+# Qwen2.5-VL-7B (gán nhãn) chạy được với transformers>=4.49.0 trên PyPI.
+# Qwen3-VL-8B (fine-tune/deploy) CẦN transformers cài từ source:
+#   pip install git+https://github.com/huggingface/transformers
 transformers>=4.49.0
 qwen-vl-utils>=0.0.8
 
-# Optional: tăng tốc inference ~30% (cần CUDA >= 11.8 và GCC)
-# pip install flash-attn --no-build-isolation
+# ── Fine-tuning QLoRA (4-bit) ────────────────────────────────────────────
+peft>=0.10.0
+bitsandbytes>=0.43.0          # 4-bit NF4; bản Linux/Colab. Windows: dùng WSL hoặc bitsandbytes-windows
 
-# ── Nếu muốn dùng Qwen3-VL-8B thay vì Qwen2.5-VL-7B ──────────────────────
-# Cài transformers từ source:
-#   pip install git+https://github.com/huggingface/transformers
-# Rồi truyền: --model_name Qwen/Qwen3-VL-8B-Instruct
+# ── Data labeling UI (Gradio) ────────────────────────────────────────────
+gradio>=4.0.0
+
+# ── Deployment (FastAPI) ─────────────────────────────────────────────────
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9       # bắt buộc cho UploadFile
+pyngrok>=7.0.0                # public URL khi deploy trên Colab
+
+# Optional: tăng tốc inference (cần CUDA >= 11.8 + GCC)
+# pip install flash-attn --no-build-isolation
