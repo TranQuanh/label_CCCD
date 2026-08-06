@@ -4,7 +4,7 @@ main.py (FastAPI)
 API phục vụ model CCCD đã fine-tune: nhận ảnh upload → trả JSON trích xuất.
 
 Tối ưu bộ nhớ khi deploy:
-  - Base Qwen3-VL-8B load 4-bit NF4 (giống lúc train) để vừa GPU nhỏ / tránh
+  - Base Qwen2.5-VL-3B load 4-bit NF4 (giống lúc train) để vừa GPU nhỏ / tránh
     tràn RAM, rồi GẮN LoRA adapter qua PeftModel.from_pretrained.
   - Model load 1 lần ở startup (lifespan), tái dùng cho mọi request.
 
@@ -13,7 +13,7 @@ Endpoints:
   POST /extract-cccd/   → upload ảnh (+ side tùy chọn) → JSON.
 
 Chạy:
-  export ADAPTER_DIR=checkpoints/qwen3vl-cccd-lora
+  export ADAPTER_DIR=checkpoints/qwen2.5vl-3b-cccd-lora-back
   uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 
@@ -31,17 +31,47 @@ from fastapi import FastAPI, File, Query, UploadFile
 from PIL import Image
 
 from src.data_pipeline.auto_label import parse_json_safe
+from src.models.vlm_registry import (
+    build_gen_kwargs,
+    images_arg,
+    load_processor,
+    preprocess_image,
+    resolve,
+)
 from src.utils.cccd_schema import SYSTEM_PROMPT, CardSide, build_user_prompt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-BASE_MODEL = os.getenv("BASE_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
-ADAPTER_DIR = os.getenv("ADAPTER_DIR", "checkpoints/qwen3vl-cccd-lora")
+BASE_MODEL = os.getenv("BASE_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct")
+ADAPTER_DIR = os.getenv("ADAPTER_DIR", "checkpoints/qwen2.5vl-3b-cccd-lora-back")
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "512"))
 
-# State toàn cục giữ model/processor sau khi load.
-STATE: dict = {"model": None, "processor": None}
+# State toàn cục giữ model/processor/spec sau khi load.
+STATE: dict = {"model": None, "processor": None, "spec": None}
+
+
+def _resolve_spec(base_model: str, adapter_dir: str):
+    """
+    Suy VLMSpec cho model đang serve.
+
+    Ưu tiên `vlm_meta.json` mà train.py ghi cạnh adapter — nó là nguồn chân lý về
+    base model đã dùng lúc fine-tune, tránh trường hợp BASE_MODEL trong env trỏ
+    sai họ model so với adapter.
+    """
+    meta_path = os.path.join(adapter_dir, "vlm_meta.json")
+    if os.path.isfile(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        trained_on = meta.get("model_id")
+        if trained_on and trained_on != base_model:
+            logger.warning(
+                "⚠ BASE_MODEL='%s' khác base lúc train ('%s') — gắn adapter lên base "
+                "khác họ sẽ cho output vô nghĩa.", base_model, trained_on,
+            )
+        if meta.get("model_key"):
+            return resolve(meta["model_key"])
+    return resolve(base_model)
 
 
 def load_inference_model(base_model: str, adapter_dir: str):
@@ -53,18 +83,13 @@ def load_inference_model(base_model: str, adapter_dir: str):
     Returns:
         (model, processor) ở chế độ eval.
     """
-    from transformers import AutoProcessor, BitsAndBytesConfig
+    # [ĐÃ SỬA] Dùng AutoModelForImageTextToText (khớp lora_setup.py & evaluate.py),
+    # KHÔNG fix cứng Qwen3VL → chạy được trên transformers bản ổn định, không cần
+    # cài từ source.
+    from transformers import AutoModelForImageTextToText, BitsAndBytesConfig
 
-    # Base phải khớp loader class lúc fine-tune (Qwen3-VL) để gắn adapter đúng.
-    try:
-        from transformers import Qwen3VLForConditionalGeneration as ModelCls
-    except ImportError as exc:
-        raise ImportError(
-            "Cần transformers hỗ trợ Qwen3-VL: "
-            "pip install git+https://github.com/huggingface/transformers"
-        ) from exc
-
-    compute_dtype = torch.float16  # đồng nhất với T4; đổi bf16 nếu GPU hỗ trợ
+    # bfloat16 khớp lúc train (L4/A100). Đổi float16 nếu GPU không hỗ trợ bf16 (vd T4).
+    compute_dtype = torch.bfloat16
     bnb = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -72,8 +97,10 @@ def load_inference_model(base_model: str, adapter_dir: str):
         bnb_4bit_compute_dtype=compute_dtype,
     )
 
-    logger.info("Loading base %s ở 4-bit...", base_model)
-    model = ModelCls.from_pretrained(
+    spec = _resolve_spec(base_model, adapter_dir)
+    STATE["spec"] = spec
+    logger.info("Loading base %s [%s] ở 4-bit...", base_model, spec.key)
+    model = AutoModelForImageTextToText.from_pretrained(
         base_model,
         quantization_config=bnb,
         device_map="auto",
@@ -91,7 +118,8 @@ def load_inference_model(base_model: str, adapter_dir: str):
     else:
         logger.warning("Không thấy adapter '%s' → dùng base model thuần", adapter_dir)
 
-    processor = AutoProcessor.from_pretrained(processor_src, trust_remote_code=True)
+    # Qua registry để áp đúng kwarg khống chế token ảnh của họ model này.
+    processor = load_processor(processor_src, spec)
     model.eval()
     logger.info("✓ Model sẵn sàng phục vụ")
     return model, processor
@@ -109,7 +137,11 @@ def run_inference(image: Image.Image, side: CardSide) -> str:
     Returns:
         Chuỗi output thô của model.
     """
-    model, processor = STATE["model"], STATE["processor"]
+    model, processor, spec = STATE["model"], STATE["processor"], STATE["spec"]
+    # Khớp tiền xử lý lúc train qua ĐÚNG hàm dùng chung của registry (thu nhỏ
+    # 1024px) → tránh lệch số token ảnh giữa train/serving và tránh OOM với ảnh
+    # upload độ phân giải cao. Sửa resize ở đây mà không sửa train là hỏng model.
+    preprocess_image(image, spec)
     messages = [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
         {
@@ -121,10 +153,15 @@ def run_inference(image: Image.Image, side: CardSide) -> str:
         },
     ]
     text_input = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(text=[text_input], images=[image], return_tensors="pt", padding=True)
+    inputs = processor(
+        text=[text_input], images=images_arg([image], spec), return_tensors="pt", padding=True
+    )
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-    output_ids = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+    # Greedy tường minh, lấy từ registry — cùng một nguồn với evaluate.py. Mỗi model
+    # có mặc định sampling riêng trong generation_config.json; để mặc định là output
+    # không tái lập được và lệch so với lúc đo metric.
+    output_ids = model.generate(**inputs, **build_gen_kwargs(MAX_NEW_TOKENS))
     generated = output_ids[:, inputs["input_ids"].shape[1]:]
     return processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
 
