@@ -1,0 +1,41 @@
+{
+  "field_accuracy": 0.9437,
+  "cer": 0.0045,
+  "f1": 0.9823,
+  "precision": 0.9819,
+  "recall": 0.9827,
+  "n_samples": 144,
+  "n_fields": 1296,
+  "per_field_accuracy": {
+    "so_cccd": 0.9861,
+    "ho_va_ten": 0.9167,
+    "ngay_sinh": 0.9861,
+    "gioi_tinh": 1.0,
+    "quoc_tich": 0.9931,
+    "que_quan": 0.8889,
+    "noi_thuong_tru": 0.7708,
+    "co_gia_tri_den": 0.9514,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "llama_vision",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/Llama-3.2-11B-Vision-Instruct",
+    "family": "mllama",
+    "params_b": 10.6,
+    "mode": "fine_tuned",
+    "adapter_dir": "/content/drive/MyDrive/cccd_project/Data/checkpoints/llama_vision-cccd-lora-front",
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": 0.8809,
+    "train_max_length": 2048
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 19852.7,
+    "p95": 21365.3,
+    "mean": 19419.7
+  },
+  "peak_vram_mb": 7970.4
+}

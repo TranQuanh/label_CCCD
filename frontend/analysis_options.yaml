@@ -1,0 +1,18 @@
+# Bật bộ lint của flutter_lints (đã khai trong dev_dependencies nhưng trước đây
+# không có file này nên chưa bao giờ có hiệu lực).
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+  language:
+    strict-casts: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_interpolation_to_compose_strings: true
+    avoid_print: true
+    unawaited_futures: true

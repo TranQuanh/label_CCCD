@@ -185,12 +185,63 @@ def evaluate(predictions: List[dict], golds: List[dict]) -> EvalResult:
 
 
 def safe_parse(value: object) -> dict:
-    """Parse 1 giá trị JSON (str/dict) → dict; lỗi → {} (đếm là sai hết)."""
+    """
+    Parse 1 giá trị JSON (str/dict) → dict; không parse được → {} (sai toàn bộ trường).
+
+    Ba nhánh, thử theo thứ tự — tương đương phần *parse* của
+    `data_pipeline.auto_label.parse_json_safe`, tức là đường phục vụ ở
+    `backend/main.py` và đường chấm điểm ở đây hiểu output thô GIỐNG NHAU:
+
+      1. `json.loads` trên chuỗi đã strip.
+      2. Bóc rào markdown ```json … ``` rồi thử lại.
+      3. Regex lấy khối `{...}` đầu tiên (bỏ câu dẫn / câu kết quanh JSON).
+
+    Bản trước chỉ có nhánh 1. Model instruct hay bọc đáp án trong rào markdown
+    hoặc thêm câu dẫn, nên nhánh 1 trượt là **mọi trường bị chấm sai** dù model
+    đọc thẻ đúng — đó là lý do 6 run zero-shot có `json_parse_rate` thấp bất
+    thường (InternVL: 0/144 và 0/161) trong khi F1 = 0 tuyệt đối.
+
+    KHÔNG hậu xử lý nội dung ở đây (ép `dac_diem_nhan_dang` chứa '/' về null, ép
+    chuẩn hoá `noi_cap`…). Những luật đó thuộc khâu GÁN NHÃN trong `auto_label`;
+    đưa vào đây thì `gold` cũng đi qua cùng hàm này (evaluate.py gọi safe_parse
+    cho cả pred lẫn gold) ⇒ nhãn chuẩn bị sửa trước khi so sánh.
+
+    Hàm chỉ NỚI điều kiện parse, không siết: chuỗi vốn đã parse được bằng nhánh 1
+    cho ra đúng dict cũ, nên mọi run có `json_parse_rate = 100%` (cả 6 run
+    fine-tuned) giữ nguyên số — không cần chạy lại.
+    """
     if isinstance(value, dict):
         return value
-    if isinstance(value, str):
+    if not isinstance(value, str):
+        return {}
+
+    text = value.strip()
+    if not text:
+        return {}
+
+    # 1. JSON trần.
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Bọc trong rào markdown: ```json\n{...}\n```
+    if text.startswith("```"):
+        lines = text.split("\n")
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        fenced = "\n".join(lines[1:end]).strip()
         try:
-            obj = json.loads(value)
+            obj = json.loads(fenced)
+            return obj if isinstance(obj, dict) else {}
+        except json.JSONDecodeError:
+            text = fenced or text
+
+    # 3. Có câu dẫn / câu kết quanh JSON → lấy khối {...} đầu tiên.
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            obj = json.loads(match.group())
             return obj if isinstance(obj, dict) else {}
         except json.JSONDecodeError:
             return {}

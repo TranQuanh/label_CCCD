@@ -1,0 +1,246 @@
+import 'package:flutter/material.dart';
+
+import '../../core/theme/app_theme.dart';
+import '../../data/session/session_store.dart';
+import '../auth/auth_screen.dart';
+import '../auth/change_password_screen.dart';
+
+/// Tab 3 — Tài khoản: thông tin người dùng + đăng xuất.
+///
+/// Sửa so với bản cũ: khối "Thông tin tài khoản" lấy từ [AuthUser] chứ không suy
+/// từ hồ sơ gần nhất. Thông tin thẻ CCCD được tách thành một khối riêng có nhãn
+/// "Từ hồ sơ gần nhất" để không bị hiểu nhầm là danh tính đã xác thực của tài khoản.
+class AccountTab extends StatelessWidget {
+  const AccountTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: sessionStore,
+      builder: (context, _) {
+        final name = sessionStore.displayName;
+        final accountRows = <List<String>>[
+          ['Tên đăng nhập', name.isEmpty ? '—' : name],
+          ['Email', sessionStore.email.isEmpty ? '—' : sessionStore.email],
+          ['Ngày sinh', sessionStore.dob.isEmpty ? '—' : sessionStore.dob],
+          ['Số hồ sơ đã tạo', sessionStore.records.length.toString()],
+        ];
+
+        final card = sessionStore.latestCard;
+        final cardRows = card == null
+            ? const <List<String>>[]
+            : <List<String>>[
+                ['Họ và tên', card.fullName],
+                ['Số CCCD', card.idNumber],
+                ['Ngày sinh', card.dob],
+              ];
+
+        return Column(
+          children: [
+            _header(context, name),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                children: [
+                  _groupLabel('THÔNG TIN TÀI KHOẢN'),
+                  _rowCard(accountRows),
+                  if (cardRows.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _groupLabel('THÔNG TIN THẺ — TỪ HỒ SƠ GẦN NHẤT'),
+                    _rowCard(cardRows),
+                    const SizedBox(height: 6),
+                    const Text(
+                        'Dữ liệu này lấy từ hồ sơ bạn kê khai gần đây nhất, '
+                        'chưa được cơ quan chức năng xác thực.',
+                        style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.hint,
+                            height: 1.4)),
+                  ],
+                  const SizedBox(height: 18),
+                  _groupLabel('BẢO MẬT'),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(AppRadius.card),
+                      border: Border.all(color: AppColors.lineSoft),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppRadius.card),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                            builder: (_) => const ChangePasswordScreen()),
+                      ),
+                      child: const Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Đổi mật khẩu',
+                                style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.ink)),
+                            Icon(Icons.chevron_right,
+                                color: Color(0xFFB0BBD2)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 52,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _confirmLogout(context),
+                      icon: const Icon(Icons.logout, size: 18),
+                      label: const Text('Đăng xuất',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.flagRed,
+                        backgroundColor: const Color(0xFFFDECEA),
+                        side: const BorderSide(
+                            color: Color(0xFFF3C6C3), width: 1.5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppRadius.button)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Đăng xuất phải **xoá dữ liệu phiên**, không chỉ điều hướng.
+  ///
+  /// Bản cũ giữ nguyên store singleton nên người dùng kế tiếp trên cùng thiết bị
+  /// nhìn thấy toàn bộ hồ sơ CCCD của người trước.
+  Future<void> _confirmLogout(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Đăng xuất?'),
+        content: const Text(
+            'Toàn bộ hồ sơ đang lưu trên thiết bị sẽ bị xoá khỏi ứng dụng.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Huỷ')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Đăng xuất',
+                style: TextStyle(color: AppColors.flagRed)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    sessionStore.logout();
+    navigator.pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const AuthScreen()),
+      (r) => false,
+    );
+  }
+
+  Widget _header(BuildContext context, String name) => Container(
+        width: double.infinity,
+        padding: EdgeInsets.fromLTRB(
+            24, MediaQuery.of(context).padding.top + 22, 24, 26),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [AppColors.navy, AppColors.navySoft],
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 78,
+              height: 78,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(.12),
+                border:
+                    Border.all(color: AppColors.star.withOpacity(.6), width: 2),
+              ),
+              child: Text(sessionStore.initial,
+                  style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.star)),
+            ),
+            const SizedBox(height: 12),
+            Text(name.isEmpty ? 'Chưa đăng nhập' : name,
+                style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white)),
+            const SizedBox(height: 3),
+            Text(sessionStore.email.isEmpty ? '—' : sessionStore.email,
+                style:
+                    const TextStyle(fontSize: 12.5, color: AppColors.onNavy)),
+          ],
+        ),
+      );
+
+  Widget _rowCard(List<List<String>> rows) => Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: Border.all(color: AppColors.lineSoft),
+        ),
+        child: Column(
+          children: [
+            for (var i = 0; i < rows.length; i++)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  border: i == rows.length - 1
+                      ? null
+                      : const Border(
+                          bottom: BorderSide(color: Color(0xFFF0F3F9))),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(rows[i][0],
+                        style: const TextStyle(
+                            fontSize: 13, color: AppColors.muted)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                          rows[i][1].trim().isEmpty ? '—' : rows[i][1],
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.ink)),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+
+  Widget _groupLabel(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text(t,
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: AppColors.muted,
+                letterSpacing: .6)),
+      );
+}

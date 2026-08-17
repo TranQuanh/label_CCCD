@@ -1,0 +1,36 @@
+{
+  "field_accuracy": 0.9783,
+  "cer": 0.0103,
+  "f1": 0.9942,
+  "precision": 0.999,
+  "recall": 0.9894,
+  "n_samples": 161,
+  "n_fields": 644,
+  "per_field_accuracy": {
+    "dac_diem_nhan_dang": 0.913,
+    "ngay_cap": 1.0,
+    "noi_cap": 1.0,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "qwen",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/Qwen2.5-VL-3B-Instruct",
+    "family": "qwen2_5_vl",
+    "params_b": 3.7,
+    "mode": "fine_tuned",
+    "adapter_dir": "/content/drive/MyDrive/cccd_project/Data/checkpoints/qwen-cccd-lora-back",
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": 1.4503,
+    "train_max_length": 2048
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 13230.1,
+    "p95": 14090.9,
+    "mean": 13048.4
+  },
+  "peak_vram_mb": 2768.4
+}

@@ -1,0 +1,41 @@
+{
+  "field_accuracy": 0.6111,
+  "cer": 0.7765,
+  "f1": 0.6673,
+  "precision": 0.6092,
+  "recall": 0.7378,
+  "n_samples": 144,
+  "n_fields": 1296,
+  "per_field_accuracy": {
+    "so_cccd": 0.9861,
+    "ho_va_ten": 0.1667,
+    "ngay_sinh": 0.9792,
+    "gioi_tinh": 0.9861,
+    "quoc_tich": 0.9931,
+    "que_quan": 0.3333,
+    "noi_thuong_tru": 0.2083,
+    "co_gia_tri_den": 0.8125,
+    "mat_the": 0.0347
+  },
+  "run": {
+    "model_key": "internvl",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/InternVL3_5-2B-HF",
+    "family": "internvl",
+    "params_b": 2.3,
+    "mode": "zero_shot",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 10337.7,
+    "p95": 11772.4,
+    "mean": 10382.9
+  },
+  "peak_vram_mb": 2449.6
+}

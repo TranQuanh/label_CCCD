@@ -1,0 +1,36 @@
+{
+  "field_accuracy": 0.3059,
+  "cer": 1.4363,
+  "f1": 0.5393,
+  "precision": 0.6069,
+  "recall": 0.4852,
+  "n_samples": 161,
+  "n_fields": 644,
+  "per_field_accuracy": {
+    "dac_diem_nhan_dang": 0.1677,
+    "ngay_cap": 1.0,
+    "noi_cap": 0.0,
+    "mat_the": 0.0559
+  },
+  "run": {
+    "model_key": "internvl",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/InternVL3_5-2B-HF",
+    "family": "internvl",
+    "params_b": 2.3,
+    "mode": "zero_shot",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 5023.3,
+    "p95": 7290.2,
+    "mean": 5516.7
+  },
+  "peak_vram_mb": 2453.5
+}

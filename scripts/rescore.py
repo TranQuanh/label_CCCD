@@ -4,7 +4,7 @@ Shim tương thích ngược — KHÔNG chứa mã nguồn.
 Script thật nằm ở **model/scripts/** (cùng tên file) — sửa code ở đó.
 File này chỉ chuyển tiếp nguyên vẹn tham số dòng lệnh, để lệnh cũ vẫn chạy:
 
-    python scripts/train.py --train_jsonl ... --output_dir ...
+    python scripts/rescore.py rescore --preds ... --report ...
 
 Notebook Colab 02–05 gọi theo đường `scripts/*.py` nên không phải sửa gì.
 """

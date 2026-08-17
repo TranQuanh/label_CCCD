@@ -17,6 +17,19 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+# Flutter (frontend/) — scaffold do `flutter create .` sinh ra, không commit
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/pubspec.lock
+frontend/android/
+frontend/ios/
+frontend/linux/
+frontend/macos/
+frontend/windows/
+frontend/web/
+
 # OS / IDE
 .DS_Store
 .vscode/

@@ -1,0 +1,41 @@
+{
+  "field_accuracy": 0.9452,
+  "cer": 0.004,
+  "f1": 0.9833,
+  "precision": 0.9827,
+  "recall": 0.9839,
+  "n_samples": 144,
+  "n_fields": 1296,
+  "per_field_accuracy": {
+    "so_cccd": 0.9931,
+    "ho_va_ten": 0.8889,
+    "ngay_sinh": 1.0,
+    "gioi_tinh": 1.0,
+    "quoc_tich": 0.9931,
+    "que_quan": 0.8958,
+    "noi_thuong_tru": 0.7639,
+    "co_gia_tri_den": 0.9722,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "internvl",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/InternVL3_5-2B-HF",
+    "family": "internvl",
+    "params_b": 2.3,
+    "mode": "fine_tuned",
+    "adapter_dir": "/content/drive/MyDrive/cccd_project/Data/checkpoints/internvl-cccd-lora-front",
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": 1.1592,
+    "train_max_length": 2560
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 17174.5,
+    "p95": 18736.6,
+    "mean": 16770.6
+  },
+  "peak_vram_mb": 2612.3
+}

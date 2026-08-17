@@ -1,0 +1,41 @@
+{
+  "field_accuracy": 0.6188,
+  "cer": 0.166,
+  "f1": 0.778,
+  "precision": 0.7807,
+  "recall": 0.7754,
+  "n_samples": 144,
+  "n_fields": 1296,
+  "per_field_accuracy": {
+    "so_cccd": 0.9792,
+    "ho_va_ten": 0.5417,
+    "ngay_sinh": 0.9583,
+    "gioi_tinh": 0.9931,
+    "quoc_tich": 0.9931,
+    "que_quan": 0.5278,
+    "noi_thuong_tru": 0.1944,
+    "co_gia_tri_den": 0.3819,
+    "mat_the": 0.0
+  },
+  "run": {
+    "model_key": "qwen",
+    "model_id": "/content/drive/MyDrive/cccd_project/Data/models/Qwen2.5-VL-3B-Instruct",
+    "family": "qwen2_5_vl",
+    "params_b": 3.7,
+    "mode": "zero_shot",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "max_new_tokens": 512,
+    "decoding": "greedy (do_sample=False, num_beams=1)",
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "latency_ms": {
+    "p50": 10275.8,
+    "p95": 11285.7,
+    "mean": 10300.9
+  },
+  "peak_vram_mb": 2523.5
+}

@@ -1,0 +1,25 @@
+name: smartid
+description: VLM-based Identity Data Extraction System — Flutter client
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Quét thẻ
+  camera: ^0.10.5+9
+  image_picker: ^1.0.7
+  # Gọi backend FastAPI (POST /extract-cccd/)
+  http: ^1.2.0
+  # Xuất biểu mẫu PDF
+  pdf: ^3.10.7
+  printing: ^5.12.0
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
