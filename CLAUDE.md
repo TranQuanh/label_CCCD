@@ -251,10 +251,12 @@ those rules would rewrite the ground truth before comparison.
 
 One FastAPI app, two layers in `backend/main.py`:
 
-- **User API `/api/v1/*`** — `auth.py` (`/auth/register|login|refresh|logout|me`),
-  `users.py` (`/users`, admin-only RBAC), `audit.py` (`/audit-logs`,
-  append-only), `forms.py` (`/forms`). Lives under `include_router(prefix="/api/v1")`
-  on the same app (NOT a mounted sub-app).
+- **User API `/api/v1/*`** — `auth.py` (`/auth/register|login|refresh|logout|me`,
+  `/auth/change-password` P2), `users.py` (`/users`, admin-only RBAC),
+  `audit.py` (`/audit-logs`, append-only), `forms.py` (`/forms` + POST/PUT admin
+  P2), `records.py` (P2: `/scan-records` submit, history, review-queue, review).
+  Lives under `include_router(prefix="/api/v1")` on the same app (NOT a mounted
+  sub-app).
 - **Serving `/extract-cccd/*`** — VLM extraction; internal, used by the Flutter
   camera flow, `benchmark.py`, and notebooks. No auth on this layer.
 
@@ -263,13 +265,17 @@ Env: `SKIP_MODEL_LOAD=1` runs in **lite mode** (model skipped) — `/health` rep
 
 **DB (`schema.sql`)** — 6 tables + view `v_scan_record_masked`; seeded with 3
 forms (`atm_open`/`health_declare`/`service_contract`). Key columns:
-`tblUser.token_version` (bumped to revoke sessions on role change/lock),
+`tblUser.token_version` (bumped to revoke sessions on role change/lock,
+change-password P2),
 `tblFormType.slug` (business key, UUID is PK — API uses slug),
+`tblFormType.required_fields` **JSONB `[{key,label,hint}]`** (P2 — server is the
+single source of form metadata),
 `tblScanRecord.review_status` (`pending`/`reviewed` — batch results still need
-human review), `tblAuditLog` append-only. Field names are Vietnamese snake_case
-(`so_cccd`) everywhere — see `cccd_schema.py`.
+human review) plus P2 `code` (`HS<yyyyMMdd>-<6số>`, server-generated) and `supp`
+(JSONB, form extra fields), `tblAuditLog` append-only. Field names are Vietnamese
+snake_case (`so_cccd`) everywhere — see `cccd_schema.py`.
 
-**Auth invariants** (all smoke-tested in `backend/smoke_test.py`, 40 cases):
+**Auth invariants** (all smoke-tested in `backend/smoke_test.py`, 72 cases):
 - Login by `identifier` = email OR username (`@`-detection); password ≥8 chars
   with letters+numbers; bcrypt hashes.
 - JWT HS256: `sub` (UUID), `role`, `tok_ver`, `jti`, `exp`, `type`. Refresh
@@ -279,11 +285,27 @@ human review), `tblAuditLog` append-only. Field names are Vietnamese snake_case
 - Logout revokes refresh + blacklists access `jti` in Redis (`jwt:blacklist`).
   Redis must use `protocol=2` (old Windows build lacks RESP3/HELLO).
 - Guards: can't self-demote; can't lock/demote the last active admin.
+- P2 change-password: NO OTP (no real SMS/email infra); verifies `current_password`,
+  bumps `token_version` + revokes refresh tokens, audits `auth.change_password`.
+
+**Scan-records invariants (P2, in `backend/records.py`)**: `POST /scan-records`
+(operator+) issues the server-generated `code` (`_generate_code()` retries on
+collision), sets `review_status='pending'`, audits `record.create`; 404 unknown
+form, 400 empty `extracted_data`. `GET /scan-records` sends `masked:true` top-level
+when the caller is viewer (reads `v_scan_record_masked`, only reviewed records,
+CCCD masked `left(...,6) || '******'`); operator sees own records, admin own or
+`?user_id=`. `PATCH /scan-records/{id}/review` (operator+) flips pending↔reviewed,
+audits `record.review`. RBAC enforced in app layer (RLS not enabled on
+`tblScanRecord`).
 
 **Gotchas while editing `backend/`**: psycopg returns UUID objects → wrap with
 `str()` for JWT `sub`; DB timestamps are naive → use the `_now_naive()` helper;
 FastAPI `TestClient` needs a `with` block to run lifespan; console is cp1252 →
-set `PYTHONIOENCODING=utf-8` for Vietnamese output.
+set `PYTHONIOENCODING=utf-8` for Vietnamese output; JSONB columns take
+`json.dumps(...)` strings (psycopg3 has no native adapter); `information_schema`
+lowercases table names (`tblformtype`) so migration guards use `lower(table_name)`;
+`ALTER TABLE ... USING` cannot contain a subquery (use `to_jsonb(text[])`);
+`CREATE OR REPLACE VIEW` can't reorder columns → `DROP VIEW IF EXISTS` first.
 
 ## Frontend (`frontend/`)
 
@@ -300,7 +322,9 @@ data or features). Three contract points, all single-source:
   confidence score anywhere in the backend.
 - **[frontend/lib/data/api/auth_api_client.dart](frontend/lib/data/api/auth_api_client.dart)**
   is the only file that knows the `/api/v1/*` shape (`/auth/*`, `/users`,
-  `/audit-logs`, `/forms`). It rides on
+  `/audit-logs`, `/forms`, `/forms/{slug}`, `/scan-records`, `/scan-records/{id}`,
+  `/scan-records/review-queue`, `/scan-records/{id}/review`, `/auth/change-password`).
+  It rides on
   [api_client.dart](frontend/lib/data/api/api_client.dart), a wrapper that attaches
   the Bearer token and **auto-refreshes on 401** (once via `/auth/refresh`, then
   replays the original request). Tokens live in Secure Storage
@@ -311,12 +335,22 @@ data or features). Three contract points, all single-source:
   [frontend/lib/data/models/id_card.dart](frontend/lib/data/models/id_card.dart)**
   is the only mapping between backend snake_case (`so_cccd`) and app camelCase
   (`idNumber`). It mirrors `FRONT_FIELDS`/`BACK_FIELDS` in `cccd_schema.py` — if
-  the schema changes, change it here too.
-- **[frontend/lib/data/session/session_store.dart](frontend/lib/data/session/session_store.dart)**
-  is the single owner of the session: `login({identifier, password})`,
-  `register(...)`, `logout()` (calls API + wipes Secure Storage + RAM records),
-  `tryAutoLogin()` (startup: refresh token in storage → `/auth/me`; failure → back
-  to the login screen). Mock mode (`ApiConfig.useMock`) bypasses all network.
+  the schema changes, change it here too. P2 adds `serverKeyMap` /
+  `toServerJson()` / `IdCardData.fromServerJson()` for scan-record submission and
+  history (same snake_case contract).
+- **`sessionStore` is the single owner of the session + records**
+  ([session_store.dart](frontend/lib/data/session/session_store.dart)): P1
+  `login({identifier, password})`, `register(...)`, `logout()` (calls API + wipes
+  Secure Storage + RAM state), `tryAutoLogin()` (startup: refresh token in storage
+  → `/auth/me`; failure → back to the login screen). P2 adds `loadForms()`,
+  `submitRecord()` (server code returned), `loadRecords()` (`masked` flag for
+  viewer), `loadReviewQueue()` / `reviewRecord()`, `changePassword()`. Mock mode
+  (`ApiConfig.useMock`) bypasses all network.
+- **`FormType.fromJson` / `kFormTypes` in
+  [frontend/lib/data/models/form_type.dart](frontend/lib/data/models/form_type.dart)**
+  — real mode renders forms from `GET /api/v1/forms` (`required_fields`
+  `[{key,label,hint}]`); `kFormTypes` is mock-only. Per-slug color/glyph is a
+  client-side style map, not data.
 
 Because the backend emits no confidence, the "needs review" flags come from
 [frontend/lib/data/validation/card_rules.dart](frontend/lib/data/validation/card_rules.dart):

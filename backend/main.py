@@ -46,7 +46,7 @@ import torch
 from fastapi import FastAPI, File, Query, UploadFile
 from PIL import Image
 
-from . import auth, audit, config, db, forms, redis_client, users
+from . import auth, audit, config, db, forms, records, redis_client, users
 from src.data_pipeline.auto_label import parse_json_safe
 from src.models.vlm_registry import (
     VLMSpec,
@@ -496,6 +496,9 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(forms.router, prefix="/api/v1")
+
+# ── P2: hồ sơ trích xuất + duyệt (lịch sử từ PostgreSQL) ───────────────────
+app.include_router(records.router, prefix="/api/v1")
 
 
 @app.get("/health")

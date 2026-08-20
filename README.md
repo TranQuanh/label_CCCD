@@ -70,7 +70,7 @@ python scripts/evaluate.py --test_jsonl data/dataset/test.jsonl \
 MODEL_KEY=internvl CHECKPOINT_DIR=checkpoints uvicorn backend.main:app --host 0.0.0.0 --port 8000
 # POST 1 ảnh  → http://localhost:8000/extract-cccd/?side=truoc
 # POST N ảnh  → http://localhost:8000/extract-cccd/batch
-# API người dùng → http://localhost:8000/api/v1/*   (auth/register, auth/login, users, audit-logs, forms)
+# API người dùng → http://localhost:8000/api/v1/*   (auth/register, auth/login, auth/change-password, users, audit-logs, forms, scan-records, review-queue)
 # Chạy không cần GPU để test luồng user: SKIP_MODEL_LOAD=1 uvicorn backend.main:app --port 8000
 
 # 5. App di động (xem frontend/README.md để dựng scaffold trước)

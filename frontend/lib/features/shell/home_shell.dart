@@ -1,11 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../core/config/api_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/session/session_store.dart';
 import '../account/account_tab.dart';
 import '../forms/forms_tab.dart';
 import '../records/records_tab.dart';
+import '../review/review_queue_tab.dart';
 
 /// Khung chính với 3 tab: Biểu mẫu · Hồ sơ · Tài khoản.
+///
+/// P2: operator/admin có thêm tab "Duyệt" (hàng đợi duyệt hồ sơ). Viewer không
+/// thấy tab này (chỉ xem bản che qua lịch sử).
+///
+/// `IndexedStack` dựng sẵn mọi tab nên lịch sử/hàng đợi được nạp lại mỗi khi
+/// chuyển tab (không phải chỉ lần đầu mở app).
 class HomeShell extends StatefulWidget {
   final int initialIndex;
   const HomeShell({super.key, this.initialIndex = 0});
@@ -17,7 +28,15 @@ class HomeShell extends StatefulWidget {
 class HomeShellState extends State<HomeShell> {
   late int _index = widget.initialIndex;
 
-  void goToTab(int i) => setState(() => _index = i);
+  void goToTab(int i) {
+    setState(() => _index = i);
+    if (i == 1) unawaited(sessionStore.loadRecords());
+    if (_canReview && i == 2) unawaited(sessionStore.loadReviewQueue());
+  }
+
+  bool get _canReview =>
+      !ApiConfig.useMock &&
+      (sessionStore.isAdmin || sessionStore.role == 'operator');
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +47,7 @@ class HomeShellState extends State<HomeShell> {
         children: [
           const FormsTab(),
           RecordsTab(onCreateNew: () => goToTab(0)),
+          if (_canReview) const ReviewQueueTab(),
           const AccountTab(),
         ],
       ),
@@ -45,7 +65,10 @@ class HomeShellState extends State<HomeShell> {
               children: [
                 _tab(0, Icons.assignment_outlined, Icons.assignment, 'Biểu mẫu'),
                 _tab(1, Icons.folder_outlined, Icons.folder, 'Hồ sơ'),
-                _tab(2, Icons.person_outline, Icons.person, 'Tài khoản'),
+                if (_canReview)
+                  _tab(2, Icons.rule_outlined, Icons.rule, 'Duyệt'),
+                _tab(_canReview ? 3 : 2, Icons.person_outline, Icons.person,
+                    'Tài khoản'),
               ],
             ),
           ),

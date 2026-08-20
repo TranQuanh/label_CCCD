@@ -48,18 +48,19 @@ features → data → core
 | # | Màn hình | File | Chức năng |
 |---|----------|------|-----------|
 | 1 | Đăng nhập / Đăng ký | `features/auth/auth_screen.dart` | P1: xác thực **thật** với backend `/api/v1/auth/*` (JWT). Đăng nhập: một trường **email hoặc tên đăng nhập** (backend phân biệt qua `@`) + mật khẩu. Đăng ký: tên đăng nhập, họ tên, email, mật khẩu **≥8 ký tự có chữ và số** (khớp `backend/security.py`). Không còn `dob`. Hiển thị lỗi nghiệp vụ từ backend qua `ApiException.userMessage`. |
-| 2 | Khung 3 tab | `features/shell/home_shell.dart` | Biểu mẫu · Hồ sơ · Tài khoản (IndexedStack). |
-| 3 | Danh mục biểu mẫu | `features/forms/forms_tab.dart` | 3 biểu mẫu hardcode (`kFormTypes`), mỗi thẻ có màu + glyph + trường bổ sung. Header chào theo `sessionStore.displayName`. |
+| 2 | Khung 3 tab | `features/shell/home_shell.dart` | Biểu mẫu · Hồ sơ · Tài khoản (IndexedStack). P2: operator/admin có thêm tab **Duyệt** (hàng đợi duyệt hồ sơ); viewer không thấy tab này. Lịch sử + hàng đợi được nạp lại mỗi khi chuyển tab. |
+| 3 | Danh mục biểu mẫu | `features/forms/forms_tab.dart` | P2: danh mục lấy từ `GET /api/v1/forms` (chế độ thật), mỗi thẻ có màu + glyph + trường bổ sung `label/hint` do server cấp; mock vẫn dùng `kFormTypes`. Header chào theo `sessionStore.displayName`. |
 | 4 | Hướng dẫn quét | `features/scan/onboarding_screen.dart` | 3 mẹo chụp + nút "Bắt đầu quét mặt trước". |
 | 5 | Camera | `features/scan/camera_screen.dart` | Chụp mặt trước rồi mặt sau (camera plugin). Cho chọn ảnh từ thư viện (`image_picker`). Flash toggle. Ảnh lưu vào thư mục tạm. |
 | 6 | Đang trích xuất | `features/scan/processing_screen.dart` | Gọi `ExtractionRepository.extract`. Lỗi → màn hình riêng với "Thử lại" (dùng ảnh cũ) và "Chụp lại". Timeout/retry nằm trong client. |
 | 7 | Đối chiếu & bổ sung | `features/review/review_screen.dart` | 7 trường mặt trước + 4 trường mặt sau (edit được) + trường bổ sung theo biểu mẫu. Kiểm tra lại từng ký tự gõ bằng `CardRules`. |
-| 8 | Xem trước biểu mẫu | `features/output/preview_screen.dart` | Biểu mẫu hoàn chỉnh + mã hồ sơ. Chế độ đọc-only khi xem lại từ tab Hồ sơ. Nút "Tải PDF" + "Gửi hồ sơ". |
-| 9 | Gửi thành công | `features/output/success_screen.dart` | Xác nhận + mã hồ sơ + "Tải lại biểu mẫu PDF" + "Về trang chủ" (về tab Hồ sơ). |
-| 10 | Hồ sơ của tôi | `features/records/records_tab.dart` | Danh sách `sessionStore.records`; tap → preview đọc-only. |
+| 8 | Xem trước biểu mẫu | `features/output/preview_screen.dart` | Biểu mẫu hoàn chỉnh + mã hồ sơ. P2: nút "Gửi hồ sơ" gọi `POST /api/v1/scan-records`, mã hồ sơ do **server cấp**. Chế độ đọc-only khi xem lại từ tab Hồ sơ / hàng đợi duyệt. Nút "Tải PDF". |
+| 9 | Gửi thành công | `features/output/success_screen.dart` | Xác nhận + mã hồ sơ (server) + "Tải lại biểu mẫu PDF" + "Về trang chủ" (về tab Hồ sơ). |
+| 10 | Hồ sơ của tôi | `features/records/records_tab.dart` | P2: lịch sử tải từ `GET /api/v1/scan-records` khi mở tab; chip **Chờ duyệt / Đã duyệt**; viewer thấy bản che số CCCD (banner). Tap → preview đọc-only. |
 | 11 | Tài khoản | `features/account/account_tab.dart` | Thông tin `AuthUser` từ server (`/api/v1/auth/me`): tên đăng nhập, họ tên, email, **vai trò** (không còn `dob`) + thẻ từ hồ sơ gần nhất (nhãn rõ "chưa được xác thực") + Đổi mật khẩu + mục **Quản trị hệ thống** (chỉ `admin`) + Đăng xuất (thu hồi token qua API + xoá dữ liệu phiên). |
-| 12 | Quản trị (admin) | `features/admin/admin_shell.dart`, `users_admin_tab.dart`, `audit_logs_admin_tab.dart` | 2 tab: **Người dùng** (`/api/v1/users` — đổi vai trò, khóa/mở khóa; tự hiển thị thông báo khi backend chặn hạ quyền self / admin cuối cùng) và **Nhật ký** (`/api/v1/audit-logs` — auth.register/login/logout, user.update…). |
-| 13 | Đổi mật khẩu | `features/auth/change_password_screen.dart` | 3 bước: form → OTP → xong. **OTP demo**: mã cố định `123456`, so sánh trên máy, còn in trên màn hình. Không có giá trị bảo mật. |
+| 12 | Quản trị (admin) | `features/admin/admin_shell.dart`, `users_admin_tab.dart`, `audit_logs_admin_tab.dart` | 2 tab: **Người dùng** (`/api/v1/users` — đổi vai trò, khóa/mở khóa; tự hiển thị thông báo khi backend chặn hạ quyền self / admin cuối cùng) và **Nhật ký** (`/api/v1/audit-logs` — auth.register/login/logout, user.update, record.create/review, auth.change_password…). |
+| 13 | Duyệt hồ sơ | `features/review/review_queue_tab.dart` | P2: operator/admin liệt kê hồ sơ `pending` từ `GET /scan-records/review-queue`; tap để xem nội dung đọc-only rồi **Duyệt** (gọi `PATCH /scan-records/{id}/review`). Sau khi duyệt, hồ sơ hiển thị trong lịch sử người dùng và bản che cho viewer. |
+| 14 | Đổi mật khẩu | `features/auth/change_password_screen.dart` | P2: một bước — nhập mật khẩu hiện tại + mật khẩu mới (x2) → gọi `POST /api/v1/auth/change-password`. Không còn OTP demo. Kiểm tra cục bộ khớp ràng buộc backend (≥8 ký tự, chữ + số). |
 
 ## 4. Hợp đồng dữ liệu (single source of truth)
 
@@ -75,7 +76,9 @@ residence, issueDate, expiry, issuePlace, features`.
 
 ### 4.2 `FormType` / `SuppField` (`data/models/form_type.dart`)
 
-Hardcode 3 biểu mẫu (chưa có `GET /forms`):
+P2: chế độ thật lấy từ `GET /api/v1/forms`; `kFormTypes` chỉ còn dùng cho **mock**.
+Server trả `required_fields` dạng JSONB `[{key, label, hint}]`, `requires_front/back`,
+`is_active`. Client map slug → màu/glyph (dùng cho hiển thị, không phải dữ liệu):
 
 | id | Tiêu đề | Trường bổ sung |
 |----|---------|----------------|
@@ -87,9 +90,12 @@ Hardcode 3 biểu mẫu (chưa có `GET /forms`):
 
 ### 4.3 `SubmittedRecord` (`data/models/submitted_record.dart`)
 
-Hồ sơ đã gửi: `code, formId, name, date, card, supp`. `newCode()` tạo mã tạm
-dạng `HS<yyyyMMdd>-<5chữsố>`. Có `toJson`/`fromJson` sẵn sàng cho tầng
-persistence. **Hiện chỉ lưu RAM** (`sessionStore`), đóng app là mất.
+Hồ sơ đã gửi: `code, formId, name, date, card, supp, reviewStatus, id`.
+P2: **mã hồ sơ do SERVER cấp** (`POST /api/v1/scan-records` → `code` dạng
+`HS<yyyyMMdd>-<6chữsố>`), lịch sử đọc từ PostgreSQL qua `GET /scan-records`
+(`fromServer` parse `extracted_data` snake_case + `supp` + `review_status`).
+`newCode()` chỉ còn dùng cho mock. Chip trạng thái: `pending` → "Chờ duyệt",
+`reviewed` → "Đã duyệt".
 
 ### 4.4 `AuthUser` (`data/models/auth_user.dart`)
 
@@ -100,20 +106,26 @@ cột này. `isAdmin` = `role == 'admin'`. `fromJson` map `user_id` → `id`.
 ### 4.5 `SessionStore` (`data/session/session_store.dart`)
 
 `ChangeNotifier` singleton (`sessionStore`): `user` (`AuthUser`), `records`
-(bất biến), `latestCard`, `displayName/email/role/initial`. P1 các phương thức
-đều **async**:
+(bất biến), `forms`, `reviewQueue`, `masked`, `latestCard`,
+`displayName/email/role/initial`. Các phương thức đều **async**:
 
 - `login({identifier, password})` — một trường nhận cả email lẫn tên đăng nhập;
   gọi `/api/v1/auth/login` (mock: vào tài khoản demo ngay).
 - `register({username, email, password, fullName})` — gọi `/api/v1/auth/register`
   (backend tự đăng nhập phiên đầu).
 - `logout()` — gọi `/api/v1/auth/logout` thu hồi refresh + blacklist access,
-  **xoá token trong Secure Storage** + xoá toàn bộ hồ sơ trong RAM.
+  **xoá token trong Secure Storage** + xoá toàn bộ hồ sơ/danh mục/hàng đợi trong RAM.
 - `tryAutoLogin()` — chạy lúc mở app: có refresh token trong Secure Storage thì
   lấy access token mới qua `/auth/refresh` rồi gọi `/auth/me`; thất bại (token
   bị thu hồi) → xoá token, về màn hình Đăng nhập.
+- `loadForms()` — nạp danh mục từ `GET /api/v1/forms` (real), fallback `kFormTypes`.
+- `submitRecord({formType, card, supp})` — gọi `POST /scan-records`, trả hồ sơ có
+  `code` **server cấp** (mock: mã tạm cục bộ).
+- `loadRecords()` — tải lịch sử từ `GET /scan-records`; viewer nhận `masked=true`.
+- `loadReviewQueue()` / `reviewRecord(id, approve: true)` — hàng đợi duyệt.
+- `changePassword({currentPassword, newPassword})` — gọi `/auth/change-password`.
 
-`addRecord`/`seedDemoRecords` như cũ; `seedDemoRecords()` chỉ chạy ở mock.
+`seedDemoRecords` chỉ chạy ở mock.
 
 ## 5. Quy tắc nghiệp vụ
 
@@ -162,14 +174,18 @@ field multipart tên `file`, timeout 90s (p50 11–20s, p95 ≈21.7s/ảnh), ret
 lần với backoff 2s (không retry lỗi 4xx). `10.0.2.2:8000` = localhost host nhìn
 từ Android emulator; máy thật đổi qua `--dart-define=API_BASE_URL`.
 
-### 6.2 Xác thực & quản trị — `data/api/auth_api_client.dart` (`/api/v1/*`)
+### 6.2 Xác thực, quản trị & hồ sơ — `data/api/auth_api_client.dart` (`/api/v1/*`)
 
-P1: đăng nhập/đăng ký/phiên + quản lý người dùng + nhật ký kiểm toán. Nằm dưới
-tiền tố `/api/v1`, khác hẳn lớp quét thẻ `/extract-cccd/*` (endpoint nội bộ của
-luồng VLM). Endpoint: `/auth/register`, `/auth/login`, `/auth/refresh`,
-`/auth/logout`, `/auth/me`, `/users`, `/users/{id}` (PUT), `/audit-logs`,
-`/forms`. Lỗi trả về theo chuẩn FastAPI: HTTP 4xx/5xx + body `{"detail": "..."}`
-(hoặc `message`) — khác với quy ước HTTP 200 ở lớp 6.1.
+P1+P2: đăng nhập/đăng ký/phiên + quản lý người dùng + nhật ký kiểm toán + danh
+mục biểu mẫu + hồ sơ trích xuất + hàng đợi duyệt. Nằm dưới tiền tố `/api/v1`,
+khác hẳn lớp quét thẻ `/extract-cccd/*` (endpoint nội bộ của luồng VLM).
+Endpoint: `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`,
+`/auth/me`, `/auth/change-password`, `/users`, `/users/{id}` (PUT),
+`/audit-logs`, `/forms`, `/forms/{slug}` (POST/PUT admin), `/scan-records`
+(POST submit, GET history, GET `/review-queue`), `/scan-records/{id}` (GET),
+`/scan-records/{id}/review` (PATCH duyệt). Lỗi trả về theo chuẩn FastAPI:
+HTTP 4xx/5xx + body `{"detail": "..."}` (hoặc `message`) — khác với quy ước
+HTTP 200 ở lớp 6.1.
 
 `AuthApiClient` đi qua `data/api/api_client.dart` — wrapper gắn `Bearer` và **tự
 làm mới token**: gặp 401 → gọi `/auth/refresh` một lần bằng refresh token trong
@@ -207,6 +223,13 @@ AVD `Medium_Phone_64`):
   SQL → phiên cũ bị vô hiệu phải đăng nhập lại, logout → token bị thu hồi và
   app về màn hình Đăng nhập. Backend log xác nhận chuỗi auto-refresh thật:
   `401 → POST /auth/refresh 200 → retry thành công`.
+- **P2 trên emulator** (`USE_MOCK=false`): danh mục biểu mẫu hiển thị 4 biểu mẫu
+  từ server (3 seed + 1 tạo qua `POST /forms` admin); gửi hồ sơ → mã server cấp
+  `HS…`; tab Hồ sơ hiển thị hồ sơ mới với chip "Chờ duyệt"; tài khoản `admin`
+  thấy tab **Duyệt**, duyệt hồ sơ → hàng đợi rỗng + hồ sơ đổi thành "Đã duyệt";
+  tài khoản `viewer` thấy banner "dữ liệu đã được che" + **không** thấy tab Duyệt;
+  màn hình Đổi mật khẩu một bước (không OTP) gọi API thật. Backend
+  `smoke_test.py`: 72 PASS / 0 FAIL.
 
 Kiểm tra code: `flutter analyze` (0 lỗi). Không có widget-test.
 
@@ -215,18 +238,13 @@ Kiểm tra code: `flutter analyze` (0 lỗi). Không có widget-test.
 - **Xác thực**: đã có token/phiên server thật (JWT + refresh). Còn thiếu: đăng ký
   chưa xác minh email (`EMAIL_VERIFICATION_ENABLED=false`), chưa có luồng quên
   mật khẩu.
-- **OTP**: mã cố định `123456`, so sánh trên máy, còn in ra màn hình.
-- **Đổi mật khẩu**: `change_password_screen.dart` vẫn là OTP demo, chưa gọi
-  endpoint đổi mật khẩu của backend (chưa có endpoint này).
-- **Lưu trữ hồ sơ**: hồ sơ vẫn chỉ RAM trên client; chưa đẩy lên server
-  (`/api/v1/scan-records` chưa có) và chưa đồng bộ lịch sử từ PostgreSQL
-  (quyết định thiết kế: server là nguồn chân lý lịch sử — xem `ARCHITECTURE.md`).
-- **Mã hồ sơ**: `newCode()` chỉ là mã tạm client-side; mã thật do server cấp
-  khi triển khai endpoint lưu hồ sơ.
-- **Danh mục biểu mẫu**: frontend vẫn hardcode 3 biểu mẫu; endpoint `/api/v1/forms`
-  đã có ở backend (3 slug `atm_open`/`health_declare`/`service_contract`) nhưng
-  chưa được dùng.
-- **Phông PDF**: `PdfGoogleFonts` tải qua mạng lần đầu — offline cần nhúng `.ttf`.
+- **Đổi mật khẩu**: đã gọi API thật, không còn OTP demo. Nhưng thu hồi toàn bộ
+  refresh token → các phiên khác phải đăng nhập lại (đúng thiết kế).
 - **Ảnh thẻ**: lưu thư mục tạm, chưa bị xoá chủ động sau trích xuất (docstring
   `camera_screen.dart` nói "bị xoá ngay" — hiện chỉ nằm trong bộ nhớ tạm của OS,
   vẫn còn cho tới khi app/OS dọn; cần dọn rõ ràng khi nối backend thật).
+- **Hàng đợi duyệt**: chưa có bộ lọc theo form/mặt thẻ trên UI (API đã hỗ trợ
+  `form_id`/`card_side`), chưa có khả năng "bỏ qua" riêng (chỉ Duyệt).
+- **Dữ liệu thẻ trong tab Tài khoản** vẫn là hồ sơ gần nhất đã lưu, không phải
+  danh tính xác thực từ server.
+- **Phông PDF**: `PdfGoogleFonts` tải qua mạng lần đầu — offline cần nhúng `.ttf`.

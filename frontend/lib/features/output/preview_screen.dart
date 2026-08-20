@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/form_type.dart';
 import '../../data/models/id_card.dart';
-import '../../data/models/submitted_record.dart';
 import '../../data/session/session_store.dart';
 import 'pdf_service.dart';
 import 'success_screen.dart';
@@ -37,27 +36,31 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
-  void _submit() {
+  Future<void> _submit() async {
     if (_submitting) return;
     setState(() => _submitting = true);
 
-    final now = DateTime.now();
-    sessionStore.addRecord(SubmittedRecord(
-      code: widget.code,
-      formId: widget.formType.id,
-      name: widget.card.fullName,
-      date: '${_two(now.day)}/${_two(now.month)}/${now.year}',
-      card: widget.card,
-      supp: widget.supp,
-    ));
-    Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
-      builder: (_) => SuccessScreen(
+    // P2: gửi lên server (mã hồ sơ do SERVER cấp). Mock vẫn lưu RAM như cũ.
+    try {
+      final saved = await sessionStore.submitRecord(
         formType: widget.formType,
         card: widget.card,
         supp: widget.supp,
-        code: widget.code,
-      ),
-    ));
+      );
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+        builder: (_) => SuccessScreen(
+          formType: widget.formType,
+          card: widget.card,
+          supp: widget.supp,
+          code: saved.code,
+        ),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _snack('Không gửi được hồ sơ: $e');
+    }
   }
 
   Future<void> _download() async {

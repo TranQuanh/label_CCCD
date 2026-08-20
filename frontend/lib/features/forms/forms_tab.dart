@@ -7,46 +7,63 @@ import '../scan/onboarding_screen.dart';
 
 /// Tab 1 — Danh mục biểu mẫu.
 ///
-/// Bọc `AnimatedBuilder` như hai tab còn lại: bản cũ đọc thẳng `appStore` mà không
-/// lắng nghe nên lời chào không đổi khi đăng nhập tài khoản khác.
-class FormsTab extends StatelessWidget {
+/// P2: danh mục lấy từ `GET /api/v1/forms` (chế độ thật) hoặc `kFormTypes`
+/// (mock). Bọc `AnimatedBuilder` để lời chào + danh mục đổi theo phiên/tải xong.
+class FormsTab extends StatefulWidget {
   const FormsTab({super.key});
+
+  @override
+  State<FormsTab> createState() => _FormsTabState();
+}
+
+class _FormsTabState extends State<FormsTab> {
+  @override
+  void initState() {
+    super.initState();
+    sessionStore.loadForms();
+  }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: sessionStore,
-      builder: (context, _) => Column(
-        children: [
-          _header(context),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text('Danh mục biểu mẫu',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.ink)),
-                    Text('${kFormTypes.length} biểu mẫu',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.muted)),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                ...kFormTypes.map((f) => Padding(
-                      padding: const EdgeInsets.only(bottom: 11),
-                      child: _FormCard(form: f),
-                    )),
-              ],
+      builder: (context, _) {
+        final forms = sessionStore.forms;
+        return Column(
+          children: [
+            _header(context),
+            Expanded(
+              child: forms.isEmpty && sessionStore.loadingForms
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.navy))
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            const Text('Danh mục biểu mẫu',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.ink)),
+                            Text('${forms.length} biểu mẫu',
+                                style: const TextStyle(
+                                    fontSize: 12, color: AppColors.muted)),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        ...forms.map((f) => Padding(
+                              padding: const EdgeInsets.only(bottom: 11),
+                              child: _FormCard(form: f),
+                            )),
+                      ],
+                    ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 

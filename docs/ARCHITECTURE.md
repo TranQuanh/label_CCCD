@@ -34,9 +34,10 @@ label_CCCD/
 │   ├── db.py  redis_client.py     #   PostgreSQL (psycopg) + Redis (token blacklist)
 │   ├── security.py                #   bcrypt + JWT + lockout
 │   ├── deps.py                    #   get_current_user / require_admin / ROLE_LEVELS
-│   ├── auth.py  users.py          #   /auth/*, /users/* (admin, RBAC)
-│   ├── audit.py  forms.py         #   /audit-logs (append-only), /forms
-│   └── smoke_test.py              #   smoke test 40 case (chạy không cần GPU)
+│   ├── auth.py  users.py          #   /auth/* (gồm change-password), /users/* (admin, RBAC)
+│   ├── audit.py  forms.py         #   /audit-logs (append-only), /forms (+ POST/PUT admin)
+│   ├── records.py                 #   /scan-records (submit, lịch sử, duyệt)
+│   └── smoke_test.py              #   smoke test 72 case (chạy không cần GPU)
 ├── frontend/                      # ⭐ Flutter app — xem docs/PRODUCT_SPEC.md
 ├── model/                         # ⭐ ML pipeline (auto-label → fine-tune → evaluate)
 │   ├── src/                       #   utils/ data_pipeline/ models/
@@ -73,7 +74,7 @@ Hai lớp API **tách biệt** trong cùng một FastAPI app (`backend/main.py`)
 
 | Lớp | Đường dẫn | Xác thực | Mục đích |
 |-----|-----------|----------|----------|
-| Ứng dụng | `/api/v1/*` | JWT Bearer (đa số) | đăng nhập/đăng ký, quản lý user (admin), audit log, danh mục biểu mẫu, (sắp tới) lưu hồ sơ |
+| Ứng dụng | `/api/v1/*` | JWT Bearer (đa số) | đăng nhập/đăng ký/đổi mật khẩu, quản lý user (admin), audit log, danh mục biểu mẫu (CRUD admin), **lưu hồ sơ + lịch sử + hàng đợi duyệt** |
 | Serving | `/extract-cccd/*` | — (nội bộ) | luồng VLM: trích xuất 1 ảnh / batch; benchmark & notebooks dùng thẳng |
 
 `/health` báo `status`, `db`, `redis`, `lite_mode` (model tắt khi `SKIP_MODEL_LOAD=1`
@@ -87,14 +88,19 @@ Hai lớp API **tách biệt** trong cùng một FastAPI app (`backend/main.py`)
 - `tblRefreshToken` — refresh token (băm SHA-256), `revoked_at`, TTL 30 ngày.
 - `tblFormType` — **UUID PK + `slug` UNIQUE** (slug = khóa nghiệp vụ, API dùng
   slug; `forms.py resolve_form_uuid()` là nơi duy nhất map slug→UUID).
+  **P2: `required_fields` là JSONB `[{key,label,hint}]`** — server là nguồn duy
+  nhất mô tả biểu mẫu; frontend không hardcode trường bổ sung ở chế độ thật.
 - `tblBatchJob` / `tblScanRecord` — hàng đợi & kết quả trích xuất.
-  `tblScanRecord.review_status` (`pending`/`reviewed`) = chốt mâu thuẫn **HITL vs
-  Batch**: kết quả batch cũng phải được duyệt trước khi vào lịch sử/xuất.
+  **P2: `tblScanRecord` có `code` (mã hồ sơ server cấp, `HS<yyyyMMdd>-<6số>`)
+  và `supp` (JSONB — trường bổ sung theo biểu mẫu).** `review_status`
+  (`pending`/`reviewed`) = chốt mâu thuẫn **HITL vs Batch**: kết quả batch cũng
+  phải được duyệt trước khi vào lịch sử/xuất.
 - `tblAuditLog` — **append-only**, ghi từ mọi sự kiện quan trọng
-  (register/login/logout/đổi role/khóa); không có endpoint sửa/xóa.
-- `v_scan_record_masked` — view cho người dùng thường: **chỉ record đã duyệt**,
-  CCCD được che (quyết định chốt **Viewer vs RLS**: RLS ở bảng gốc cho
-  owner+admin; viewer đọc qua view này).
+  (register/login/logout/đổi role/khóa/đổi mật khẩu/tạo-duyệt hồ sơ); không có
+  endpoint sửa/xóa.
+- `v_scan_record_masked` — view cho viewer: **chỉ record đã duyệt**, CCCD được
+  che (`left(so_cccd,6) || '******'`). (Quyết định chốt **Viewer vs RLS**: RLS ở
+  bảng gốc cho owner+admin; viewer đọc qua view này.)
 
 ### Xác thực & RBAC (`backend/security.py`, `deps.py`, `auth.py`)
 
@@ -106,8 +112,25 @@ Hai lớp API **tách biệt** trong cùng một FastAPI app (`backend/main.py`)
 - Lockout: 5 lần sai → khóa 15 phút; audit + ghi `failed_login_count`.
 - **Thu hồi quyền**: đổi role / khóa tài khoản → `token_version++` + revoke mọi
   refresh token → JWT cũ vô hiệu ngay, người đó phải đăng nhập lại.
+- **P2: Đổi mật khẩu** (`POST /auth/change-password`) — **không OTP** (P2 quyết
+  định: không có hạ tầng SMS/email thật), chỉ xác minh `current_password`; đổi
+  hash + `token_version++` + revoke refresh token → phiên khác bị đăng xuất.
 - Guards: không tự hạ quyền bản thân; không khóa/hạ quyền admin cuối cùng.
 - Logout: revoke refresh + blacklist `jti` access vào Redis (key `jwt:blacklist`).
+
+### Hồ sơ trích xuất (P2 — `backend/records.py`)
+
+- **`POST /scan-records`** (operator+): nhận `form_id` + `extracted_data` +
+  `supp` + `card_side`; server sinh `code` (`_generate_code()`, retry khi trùng),
+  `review_status = 'pending'`, audit `record.create`. 404 nếu form không tồn tại,
+  400 nếu `extracted_data` rỗng.
+- **`GET /scan-records`**: viewer → `v_scan_record_masked` (chỉ đã duyệt, số CCCD
+  che, response có cờ `masked:true`); operator → hồ sơ của mình; admin → của mình
+  hoặc `?user_id=`. Phân trang `limit/offset`.
+- **`GET /scan-records/review-queue`** (operator+): hồ sơ `pending`, lọc
+  `form_id`/`card_side`.
+- **`PATCH /scan-records/{id}/review`** (operator+): `pending` ↔ `reviewed`, audit
+  `record.review`. RBAC áp dụng ở tầng app (RLS chưa bật trên bảng gốc).
 
 ### Mâu thuẫn tài liệu — chốt quyết định (P1)
 
@@ -127,6 +150,19 @@ Hai lớp API **tách biệt** trong cùng một FastAPI app (`backend/main.py`)
 9. **ID biểu mẫu** → UUID PK + slug UNIQUE; API dùng slug.
 10. **Endpoint** → app API dưới `/api/v1/*`; `/extract-cccd/*` là serving nội bộ.
 11. **Viewer vs RLS** → RLS bảng gốc (owner+admin) + view che cho viewer.
+
+### Chốt P2 (quyết định phạm vi P2)
+
+- **Đổi mật khẩu**: KHÔNG dùng OTP — không có hạ tầng SMS/email thật; chỉ xác
+  minh mật khẩu hiện tại (`POST /auth/change-password`).
+- **Danh mục biểu mẫu**: `required_fields` chuyển TEXT[] → **JSONB
+  `[{key,label,hint}]`** để `/forms` là nguồn duy nhất mô tả biểu mẫu (gồm cả
+  label/hint tiếng Việt); frontend mock vẫn giữ `kFormTypes`.
+- **Tab Duyệt trên UI** làm trong P2 (không chỉ API) — operator/admin thấy tab
+  "Duyệt" trong khung chính; viewer không thấy.
+- **Vai trò viewer có UI** trong P2: xem lịch sử qua bản che, không thấy tab Duyệt.
+- **Đặt tên API/DB**: tiếng Việt snake_case (`so_cccd`) ở DB JSONB + API; app
+  convert camelCase↔snake_case qua `serverKeyMap`/`toServerJson`/`fromServerJson`.
 
 ## Lệnh chạy nhanh (ngoài Colab)
 

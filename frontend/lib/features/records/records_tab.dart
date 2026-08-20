@@ -6,9 +6,23 @@ import '../../core/theme/app_theme.dart';
 import '../output/preview_screen.dart';
 
 /// Tab 2 — Hồ sơ người dùng đã tạo.
-class RecordsTab extends StatelessWidget {
+///
+/// P2: ở chế độ thật, lịch sử tải từ server (`GET /scan-records`) khi mở tab.
+/// Viewer thấy bản che số CCCD (banner "dữ liệu đã được che").
+class RecordsTab extends StatefulWidget {
   final VoidCallback onCreateNew;
   const RecordsTab({super.key, required this.onCreateNew});
+
+  @override
+  State<RecordsTab> createState() => _RecordsTabState();
+}
+
+class _RecordsTabState extends State<RecordsTab> {
+  @override
+  void initState() {
+    super.initState();
+    sessionStore.loadRecords();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,12 +75,39 @@ class RecordsTab extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (sessionStore.masked) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: AppColors.star.withValues(alpha: .16),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: AppColors.star.withValues(alpha: .35)),
+                      ),
+                      child: const Row(children: [
+                        Icon(Icons.visibility_off_outlined,
+                            size: 15, color: AppColors.star),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                              'Bạn xem bản che: số CCCD đã ẩn một phần.',
+                              style: TextStyle(
+                                  fontSize: 11.5, color: AppColors.star)),
+                        ),
+                      ]),
+                    ),
+                  ],
                 ],
               ),
             ),
             Expanded(
               child: records.isEmpty
-                  ? _empty()
+                  ? (sessionStore.loadingRecords
+                      ? const Center(
+                          child: CircularProgressIndicator(color: AppColors.navy))
+                      : _empty())
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
                       children: records
@@ -114,7 +155,7 @@ class RecordsTab extends StatelessWidget {
                       fontSize: 12.5, color: AppColors.hint, height: 1.5)),
               const SizedBox(height: 18),
               ElevatedButton(
-                onPressed: onCreateNew,
+                onPressed: widget.onCreateNew,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.navy,
                   foregroundColor: Colors.white,
@@ -140,7 +181,9 @@ class _RecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final form = formTypeById(record.formId);
+    final form = sessionStore.formById(record.formId) ??
+        formTypeById(record.formId);
+    final isPending = record.reviewStatus == 'pending';
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.card),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
@@ -187,11 +230,19 @@ class _RecordCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(form.title,
-                        style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.ink)),
+                    Row(children: [
+                      Flexible(
+                        child: Text(form.title,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.ink)),
+                      ),
+                      const SizedBox(width: 6),
+                      if (isPending) _statusChip('Chờ duyệt', AppColors.warn)
+                      else _statusChip('Đã duyệt', AppColors.valid),
+                    ]),
                     const SizedBox(height: 2),
                     Text(record.code,
                         style: const TextStyle(
@@ -225,4 +276,15 @@ class _RecordCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _statusChip(String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+      );
 }

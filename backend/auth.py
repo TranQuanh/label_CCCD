@@ -72,6 +72,11 @@ class RefreshBody(BaseModel):
     refresh_token: str
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 def _validate_password(password: str) -> Optional[str]:
     """Kiểm tra mật khẩu: ≥8 ký tự và có cả chữ lẫn số. Trả thông báo lỗi hoặc None."""
     if len(password) < 8:
@@ -324,3 +329,52 @@ def me(user: dict = Depends(get_current_user)) -> dict:
         "email": user["email"],
         "role": user["role"],
     }
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Đổi mật khẩu: xác minh mật khẩu hiện tại, đặt mật khẩu mới, thu hồi mọi
+    phiên khác (bump token_version + revoke refresh token) — token hiện tại vẫn
+    dùng được tới khi hết hạn.
+
+    P2 quyết định: KHÔNG dùng OTP (không có hạ tầng SMS/email thật) — chỉ cần
+    người dùng chứng minh mật khẩu hiện tại.
+    """
+    pw_err = _validate_password(body.new_password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
+
+    # Verify mật khẩu hiện tại. Đúng thì không lộ gì; sai thì 400 rõ ràng.
+    if not verify_password(body.current_password, user["password_hash"]):
+        audit(user["id"], "auth.change_password_failed", "user", user["id"],
+              None, *_client_meta(request))
+        raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng")
+
+    if body.current_password == body.new_password:
+        raise HTTPException(status_code=400, detail="Mật khẩu mới trùng mật khẩu hiện tại")
+
+    # Đổi hash + tăng token_version → mọi JWT/refresh cũ của CÁC PHIÊN KHÁC bị
+    # vô hiệu. Phiên hiện tại tiếp tục sống (token_version không nằm trong
+    # kiểm tra của chính request này sau khi đổi — không ảnh hưởng tới trả lời).
+    db.execute(
+        "UPDATE tblUser SET password_hash = %s, token_version = token_version + 1, "
+        "updated_at = NOW() WHERE id = %s",
+        (hash_password(body.new_password), user["id"]),
+    )
+    # Revoke các refresh token KHÁC phiên hiện tại. Cách đơn giản và an toàn:
+    # thu hồi hết refresh token đang sống (bắt buộc đăng nhập lại sau này).
+    db.execute(
+        "UPDATE tblRefreshToken SET revoked_at = NOW() "
+        "WHERE user_id = %s AND revoked_at IS NULL AND expires_at > NOW()",
+        (user["id"],),
+    )
+
+    ip, device = _client_meta(request)
+    audit(user["id"], "auth.change_password", "user", user["id"],
+          None, ip, device)
+    return {"message": "Đã đổi mật khẩu. Vui lòng đăng nhập lại bằng mật khẩu mới."}

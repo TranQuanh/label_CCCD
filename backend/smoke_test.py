@@ -1,11 +1,16 @@
 """
 smoke_test.py
 =============
-Smoke test P1 — chạy trực tiếp qua FastAPI TestClient (không cần uvicorn).
+Smoke test P1+P2 — chạy trực tiếp qua FastAPI TestClient (không cần uvicorn).
 
-Cover: register → login sai 5 lần (lock) → login đúng → me → refresh → logout →
-kiểm access cũ bị blacklist → admin tạo user + đổi role → token cũ bị từ chối →
-audit-logs đủ sự kiện.
+Cover:
+  P1 — register → login sai 5 lần (lock) → login đúng → me → refresh → logout →
+       kiểm access cũ bị blacklist → admin tạo user + đổi role → token cũ bị
+       từ chối → audit-logs đủ sự kiện.
+  P2 — /forms trả metadata JSONB {key,label,hint}; admin POST/PUT /forms;
+       gửi hồ sơ (POST /scan-records) nhận mã server; lịch sử từ PostgreSQL;
+       hàng đợi duyệt + duyệt; viewer chỉ đọc bản đã duyệt có CCCD che;
+       đổi mật khẩu (bỏ OTP, verify mật khẩu hiện tại).
 
 Chạy:
   $env:SKIP_MODEL_LOAD='1'
@@ -44,11 +49,13 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def main() -> None:
-    # Dọn dữ liệu test còn sót từ lần chạy trước (không đụng tblFormType).
+    # Dọn dữ liệu test còn sót từ lần chạy trước (không đụng seed tblFormType;
+    # chỉ xoá biểu mẫu P2 do test tạo ra để lần chạy sau không trùng slug).
     import psycopg
 
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute("TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, tblBatchJob, tblUser CASCADE")
+        conn.execute("DELETE FROM tblFormType WHERE slug = 'work_permit'")
         conn.commit()
 
     # `with` để TestClient kích hoạt lifespan (init_db + Redis).
@@ -151,7 +158,7 @@ def _run(client: TestClient) -> None:
     r = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh})
     check("refresh sau logout bị revoke (401)", r.status_code == 401, str(r.json()))
 
-    print("== Forms ==")
+    print("== Forms (P1 + P2 metadata JSONB) ==")
     r = client.get("/api/v1/forms")
     body = r.json()
     check("forms 200", r.status_code == 200, str(body))
@@ -159,11 +166,16 @@ def _run(client: TestClient) -> None:
     slugs = {f["slug"] for f in body.get("forms", [])}
     check("đủ 3 slug quen thuộc", slugs == {"atm_open", "health_declare", "service_contract"})
     atm = next(f for f in body["forms"] if f["slug"] == "atm_open")
+    atm_keys = {f["key"] for f in atm["required_fields"]}
     check("form trả requires_front/back + required_fields",
           atm["requires_front"] is True and atm["requires_back"] is True
-          and "phone" in atm["required_fields"] and "occupation" in atm["required_fields"])
+          and {"phone", "occupation"} <= atm_keys, str(atm_keys))
+    # P2: required_fields giờ là list dict {key,label,hint}
+    phone_field = next(f for f in atm["required_fields"] if f["key"] == "phone")
+    check("required_fields JSONB có label/hint",
+          bool(phone_field.get("label")) and bool(phone_field.get("hint")), str(phone_field))
 
-    print("== Admin: tạo user + đổi role → invalidate token ==")
+    print("== P1: Admin — tạo user + đổi role → invalidate token ==")
     # Đăng ký admin thủ công qua SQL (chưa có endpoint seed admin).
     from backend.security import hash_password
     admin_id = None
@@ -231,14 +243,159 @@ def _run(client: TestClient) -> None:
     )
     check("admin khóa chính mình → 400", r.status_code == 400, str(r.json()))
 
-    print("== Audit logs ==")
+    print("== P2: Admin quản lý biểu mẫu (POST/PUT /forms) ==")
+    # Đăng ký operator1 để test các luồng hồ sơ (giữ role operator).
+    r = client.post("/api/v1/auth/register", json={
+        "username": "operator1", "email": "operator1@cccd.local",
+        "password": "opPass123", "full_name": "Operator 1",
+    })
+    operator1_access = r.json()["data"]["access_token"]
+    check("đăng ký operator1 201", r.status_code == 201)
+
+    r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"slug": "x", "name": "X", "required_fields": []})
+    check("tạo form (operator) → 403", r.status_code == 403, str(r.json()))
+
+    r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {admin_access}"},
+                    json={"slug": "work_permit", "name": "Giấy phép lao động",
+                          "description": "Test P2", "requires_front": True,
+                          "requires_back": True,
+                          "required_fields": [
+                              {"key": "phone", "label": "Số điện thoại", "hint": "Nhập SĐT"},
+                              {"key": "company", "label": "Công ty", "hint": "Tên công ty"},
+                          ]})
+    check("tạo form (admin) 201", r.status_code == 201, str(r.json())[:80])
+
+    r = client.put("/api/v1/forms/work_permit", headers={"Authorization": f"Bearer {admin_access}"},
+                   json={"requires_back": False, "required_fields": [
+                       {"key": "phone", "label": "Số điện thoại", "hint": "Nhập SĐT"}]})
+    check("sửa form (admin) 200", r.status_code == 200, str(r.json())[:80])
+
+    r = client.get("/api/v1/forms")
+    check("forms mới xuất hiện", any(f["slug"] == "work_permit" for f in r.json()["forms"]))
+    wp = next(f for f in r.json()["forms"] if f["slug"] == "work_permit")
+    check("sửa form: requires_back=False + 1 trường",
+          wp["requires_back"] is False and len(wp["required_fields"]) == 1)
+
+    print("== P2: Gửi hồ sơ (POST /scan-records) ==")
+    card = {
+        "so_cccd": "001201123456", "ho_va_ten": "NGUYỄN VĂN A",
+        "ngay_sinh": "01/01/1990", "gioi_tinh": "Nam", "quoc_tich": "Việt Nam",
+        "que_quan": "Hà Nội", "noi_thuong_tru": "Hà Nội", "co_gia_tri_den": "01/01/2030",
+    }
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"form_id": "atm_open", "extracted_data": card,
+                          "supp": {"phone": "0901234567", "occupation": "Kỹ sư"},
+                          "card_side": "both", "parse_ok": True, "is_edited": False})
+    body = r.json()
+    check("gửi hồ sơ 201", r.status_code == 201, str(body))
+    check("server cấp mã hồ sơ (HS...)", bool(body.get("code", "").startswith("HS")), str(body))
+    rec_id = body.get("record_id")
+    rec_code = body.get("code")
+
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"form_id": "khong-ton-tai", "extracted_data": card})
+    check("gửi với form không tồn tại → 404", r.status_code == 404, str(r.json()))
+
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"form_id": "atm_open", "extracted_data": {}})
+    check("gửi extracted_data rỗng → 400", r.status_code == 400, str(r.json()))
+
+    print("== P2: Lịch sử hồ sơ ==")
+    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"})
+    body = r.json()
+    check("GET /scan-records (operator) 200", r.status_code == 200, str(body)[:80])
+    check("lịch sử có record vừa gửi + pending", body.get("count", 0) >= 1
+          and body["records"][0]["code"] == rec_code
+          and body["records"][0]["review_status"] == "pending")
+    check("lịch sử trả supp + extracted_data", body["records"][0].get("supp", {}).get("phone") == "0901234567"
+          and body["records"][0]["extracted_data"].get("so_cccd") == "001201123456")
+    check("lịch sử trả tên biểu mẫu", body["records"][0].get("form_name") == "Đăng ký mở thẻ ATM")
+
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {operator1_access}"})
+    check("GET chi tiết record 200", r.status_code == 200, str(r.json())[:80])
+
+    # operator không xem được record của người khác (chỉ có record của operator1).
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {admin_access}"})
+    check("admin xem được record (có quyền)", r.status_code == 200, str(r.json())[:80])
+
+    print("== P2: Hàng đợi duyệt + duyệt ==")
+    r = client.get("/api/v1/scan-records/review-queue", headers={"Authorization": f"Bearer {operator1_access}"})
+    body = r.json()
+    check("review-queue có record pending", body.get("count", 0) >= 1, str(body)[:80])
+
+    r = client.patch(f"/api/v1/scan-records/{rec_id}/review",
+                     headers={"Authorization": f"Bearer {operator1_access}"},
+                     json={"review_status": "reviewed"})
+    check("duyệt record → 200", r.status_code == 200, str(r.json())[:80])
+
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {operator1_access}"})
+    check("record sau duyệt = reviewed", r.json().get("review_status") == "reviewed")
+
+    print("== P2: Viewer — chỉ đọc bản đã duyệt, CCCD bị che ==")
+    # nguyenvana đã được đổi role viewer ở phần P1 admin bên trên.
+    r = client.post("/api/v1/auth/login", json={
+        "identifier": "nguyenvana", "password": "demoPass123",
+    })
+    viewer_access = r.json()["data"]["access_token"]
+    check("viewer login 200", r.status_code == 200)
+
+    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {viewer_access}"})
+    body = r.json()
+    check("viewer xem lịch sử → masked=true", body.get("masked") is True, str(body)[:120])
+    viewer_records = body.get("records", [])
+    check("viewer thấy ít nhất 1 record đã duyệt", len(viewer_records) >= 1)
+    # viewer thấy record đã duyệt của người khác — số CCCD phải bị che.
+    if viewer_records:
+        masked_cccd = viewer_records[0]["extracted_data"].get("so_cccd", "")
+        check("viewer thấy CCCD bị che (******)", "******" in masked_cccd, masked_cccd)
+
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {viewer_access}"})
+    check("viewer xem chi tiết record đã duyệt 200", r.status_code == 200, str(r.json())[:80])
+
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {viewer_access}"},
+                    json={"form_id": "atm_open", "extracted_data": card})
+    check("viewer gửi hồ sơ → 403", r.status_code == 403, str(r.json()))
+
+    r = client.get("/api/v1/scan-records/review-queue", headers={"Authorization": f"Bearer {viewer_access}"})
+    check("viewer xem review-queue → 403", r.status_code == 403, str(r.json()))
+
+    print("== P2: Đổi mật khẩu (không OTP) ==")
+    r = client.post("/api/v1/auth/change-password",
+                    headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"current_password": "sai-mat-khau", "new_password": "newPass123"})
+    check("đổi mật khẩu sai current → 400", r.status_code == 400, str(r.json()))
+
+    r = client.post("/api/v1/auth/change-password",
+                    headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"current_password": "opPass123", "new_password": "newPass123"})
+    check("đổi mật khẩu đúng → 200", r.status_code == 200, str(r.json())[:80])
+
+    r = client.post("/api/v1/auth/login", json={
+        "identifier": "operator1", "password": "opPass123",
+    })
+    check("mật khẩu cũ hết hiệu lực", r.status_code == 401, str(r.json()))
+    r = client.post("/api/v1/auth/login", json={
+        "identifier": "operator1", "password": "newPass123",
+    })
+    check("mật khẩu mới đăng nhập được", r.status_code == 200)
+    operator1_access = r.json()["data"]["access_token"]
+
+    r = client.post("/api/v1/auth/change-password",
+                    headers={"Authorization": f"Bearer {operator1_access}"},
+                    json={"current_password": "newPass123", "new_password": "newPass123"})
+    check("đổi mật khẩu trùng mật khẩu cũ → 400", r.status_code == 400, str(r.json()))
+
+    print("== Audit logs (đủ sự kiện P2) ==")
     r = client.get("/api/v1/audit-logs", headers={"Authorization": f"Bearer {admin_access}"})
     body = r.json()
     check("audit-logs 200", r.status_code == 200, str(body)[:80])
     actions = {log["action"] for log in body.get("logs", [])}
-    check("có đủ sự kiện chính", {"auth.register", "auth.login", "auth.logout",
-                                   "auth.login_failed", "user.update"} <= actions,
-          str(actions))
+    check("có đủ sự kiện P1+P2", {"auth.register", "auth.login", "auth.logout",
+                                  "auth.login_failed", "user.update",
+                                  "record.create", "record.review",
+                                  "auth.change_password"} <= actions,
+          str(sorted(actions)))
 
     print(f"\n== KẾT QUẢ: {PASS} PASS / {FAIL} FAIL ==")
     sys.exit(1 if FAIL else 0)
