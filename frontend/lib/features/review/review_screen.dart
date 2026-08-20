@@ -239,7 +239,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: AppColors.star.withOpacity(.55), width: 1.5),
+          border: Border.all(color: AppColors.star.withValues(alpha: .55), width: 1.5),
         ),
         child: Text(label,
             style: const TextStyle(

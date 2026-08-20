@@ -104,7 +104,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                     borderRadius: BorderRadius.circular(6),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(.4),
+                          color: Colors.black.withValues(alpha: .4),
                           blurRadius: 30,
                           offset: const Offset(0, 14)),
                     ],
@@ -218,7 +218,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
               height: 34,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(.12),
+                color: Colors.white.withValues(alpha: .12),
                 borderRadius: BorderRadius.circular(10),
               ),
               child:
@@ -278,7 +278,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
                         side: BorderSide(
-                            color: Colors.white.withOpacity(.35), width: 1.5),
+                            color: Colors.white.withValues(alpha: .35), width: 1.5),
                         shape: RoundedRectangleBorder(
                             borderRadius:
                                 BorderRadius.circular(AppRadius.button)),

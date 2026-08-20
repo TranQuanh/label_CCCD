@@ -81,7 +81,7 @@ class _SuccessScreenState extends State<SuccessScreen> {
                     color: AppColors.valid,
                     boxShadow: [
                       BoxShadow(
-                          color: AppColors.valid.withOpacity(.5),
+                          color: AppColors.valid.withValues(alpha: .5),
                           blurRadius: 36,
                           offset: const Offset(0, 16)),
                     ],
@@ -108,9 +108,9 @@ class _SuccessScreenState extends State<SuccessScreen> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 18, vertical: 10),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.1),
+                    color: Colors.white.withValues(alpha: .1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white.withOpacity(.2)),
+                    border: Border.all(color: Colors.white.withValues(alpha: .2)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -136,7 +136,7 @@ class _SuccessScreenState extends State<SuccessScreen> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                       side: BorderSide(
-                          color: Colors.white.withOpacity(.4), width: 1.5),
+                          color: Colors.white.withValues(alpha: .4), width: 1.5),
                       shape: RoundedRectangleBorder(
                           borderRadius:
                               BorderRadius.circular(AppRadius.button)),

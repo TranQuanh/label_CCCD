@@ -17,7 +17,7 @@ when editing.
 
 ```
 frontend/  Flutter e-KYC app.  lib/{core,data,features}/ — see frontend/README.md
-backend/   FastAPI serving.    main.py
+backend/   FastAPI: API /api/v1 (auth+RBAC+audit) + serving /extract-cccd.  main.py + modules
 model/     ML pipeline.        src/  scripts/  notebooks/
 docs/      ARCHITECTURE · CHANGELOG · VLM_COMPARISON_PLAN · Discussion
 data/ checkpoints/ result_front/ result_back/   artifacts (gitignored)
@@ -90,6 +90,13 @@ python scripts/benchmark.py --mode local --models qwen,internvl,llama_vision \
 python scripts/benchmark.py --mode http --url http://localhost:8000 \
     --concurrency 1,2,4 --batch_sizes 1,4      # API must already be running
 python scripts/benchmark.py --mode merge --report_dir result  # → benchmark_comparison.{json,md}
+
+# Stage 4c — user API (/api/v1) needs PostgreSQL + Redis; run WITHOUT a GPU:
+$env:SKIP_MODEL_LOAD=1; $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/cccd"
+$env:REDIS_URL="redis://localhost:6379/0"; $env:JWT_SECRET="dev-secret"; $env:PYTHONIOENCODING="utf-8"
+uvicorn backend.main:app --port 8000     # /health reports db, redis, lite_mode
+# Auth flow: POST /api/v1/auth/register|login|refresh|logout|me; GET /api/v1/users|audit-logs|forms
+# Repo-local convenience script: powershell -File C:\Users\ADMIN\AppData\Local\Temp\opencode\start_backend_lite.ps1
 
 # Stage 5 — Flutter client (frontend/). Scaffold is NOT committed; generate once:
 cd frontend && flutter create . && flutter pub get
@@ -240,24 +247,76 @@ post-processing (forcing `dac_diem_nhan_dang` containing `/` to null, canonicali
 `noi_cap`) into `safe_parse`: `evaluate.py` runs gold through the same function, so
 those rules would rewrite the ground truth before comparison.
 
+## Backend (`backend/`) — API `/api/v1` + serving `/extract-cccd/*`
+
+One FastAPI app, two layers in `backend/main.py`:
+
+- **User API `/api/v1/*`** — `auth.py` (`/auth/register|login|refresh|logout|me`),
+  `users.py` (`/users`, admin-only RBAC), `audit.py` (`/audit-logs`,
+  append-only), `forms.py` (`/forms`). Lives under `include_router(prefix="/api/v1")`
+  on the same app (NOT a mounted sub-app).
+- **Serving `/extract-cccd/*`** — VLM extraction; internal, used by the Flutter
+  camera flow, `benchmark.py`, and notebooks. No auth on this layer.
+
+Env: `SKIP_MODEL_LOAD=1` runs in **lite mode** (model skipped) — `/health` reports
+`db`, `redis`, `lite_mode`. Without it, needs the 4-bit base + adapters (GPU).
+
+**DB (`schema.sql`)** — 6 tables + view `v_scan_record_masked`; seeded with 3
+forms (`atm_open`/`health_declare`/`service_contract`). Key columns:
+`tblUser.token_version` (bumped to revoke sessions on role change/lock),
+`tblFormType.slug` (business key, UUID is PK — API uses slug),
+`tblScanRecord.review_status` (`pending`/`reviewed` — batch results still need
+human review), `tblAuditLog` append-only. Field names are Vietnamese snake_case
+(`so_cccd`) everywhere — see `cccd_schema.py`.
+
+**Auth invariants** (all smoke-tested in `backend/smoke_test.py`, 40 cases):
+- Login by `identifier` = email OR username (`@`-detection); password ≥8 chars
+  with letters+numbers; bcrypt hashes.
+- JWT HS256: `sub` (UUID), `role`, `tok_ver`, `jti`, `exp`, `type`. Refresh
+  tokens are random 64-char strings, SHA-256-hashed in DB, revocable, 30-day TTL.
+- Lockout: 5 failed logins → locked 15 min. Role change / lock → `token_version++`
+  + revoke all refresh tokens (old JWT dies immediately).
+- Logout revokes refresh + blacklists access `jti` in Redis (`jwt:blacklist`).
+  Redis must use `protocol=2` (old Windows build lacks RESP3/HELLO).
+- Guards: can't self-demote; can't lock/demote the last active admin.
+
+**Gotchas while editing `backend/`**: psycopg returns UUID objects → wrap with
+`str()` for JWT `sub`; DB timestamps are naive → use the `_now_naive()` helper;
+FastAPI `TestClient` needs a `with` block to run lifespan; console is cp1252 →
+set `PYTHONIOENCODING=utf-8` for Vietnamese output.
+
 ## Frontend (`frontend/`)
 
 Flutter e-KYC client, layered `features → data → core` (core must never import
-data or features). Two contract points, both single-source:
+data or features). Three contract points, all single-source:
 
 - **[frontend/lib/data/api/cccd_api_client.dart](frontend/lib/data/api/cccd_api_client.dart)**
-  is the only file that knows the HTTP shape. Four invariants, each of which was a
+  is the only file that knows the extract HTTP shape. Four invariants, each of which was a
   real bug: always send `?side=truoc|sau` explicitly (`auto` infers from filename
   and camera files have no `front`/`back` token); decode with
   `utf8.decode(res.bodyBytes)` (FastAPI sends no charset, `http` falls back to
   latin1 and mangles diacritics); errors come back with **HTTP 200** so check
   `body['error']` and `parse_ok`, not just the status code; and there is no
   confidence score anywhere in the backend.
+- **[frontend/lib/data/api/auth_api_client.dart](frontend/lib/data/api/auth_api_client.dart)**
+  is the only file that knows the `/api/v1/*` shape (`/auth/*`, `/users`,
+  `/audit-logs`, `/forms`). It rides on
+  [api_client.dart](frontend/lib/data/api/api_client.dart), a wrapper that attaches
+  the Bearer token and **auto-refreshes on 401** (once via `/auth/refresh`, then
+  replays the original request). Tokens live in Secure Storage
+  ([token_store.dart](frontend/lib/data/api/token_store.dart)) — never plaintext.
+  Errors from `/api/v1/*` use standard FastAPI `{"detail": "..."}` with a proper
+  4xx/5xx status (unlike the extract layer's HTTP-200 convention).
 - **`frontKeyMap` / `backKeyMap` in
   [frontend/lib/data/models/id_card.dart](frontend/lib/data/models/id_card.dart)**
   is the only mapping between backend snake_case (`so_cccd`) and app camelCase
   (`idNumber`). It mirrors `FRONT_FIELDS`/`BACK_FIELDS` in `cccd_schema.py` — if
   the schema changes, change it here too.
+- **[frontend/lib/data/session/session_store.dart](frontend/lib/data/session/session_store.dart)**
+  is the single owner of the session: `login({identifier, password})`,
+  `register(...)`, `logout()` (calls API + wipes Secure Storage + RAM records),
+  `tryAutoLogin()` (startup: refresh token in storage → `/auth/me`; failure → back
+  to the login screen). Mock mode (`ApiConfig.useMock`) bypasses all network.
 
 Because the backend emits no confidence, the "needs review" flags come from
 [frontend/lib/data/validation/card_rules.dart](frontend/lib/data/validation/card_rules.dart):
@@ -267,8 +326,15 @@ matching digit 4 of the ID, expiry landing on the 25/40/60 birthday). `que_quan`
 does not print them and cards issued at 60+ have no expiry, so blocking on those
 would lock out valid users.
 
-`frontend/` ships `lib/` + `pubspec.yaml` only; run `flutter create .` once to
-generate the platform scaffold, then add CAMERA/INTERNET permissions manually.
+`frontend/` ships `lib/` + `pubspec.yaml` only; the platform scaffold is **not
+committed** (`.gitignore` excludes it). The current dev machine has it generated
+already (`flutter create . --project-name smartid --org vn.smartid`, applicationId
+`vn.smartid.smartid`) with CAMERA/INTERNET permissions and
+`usesCleartextTraffic="true"` added in `android/app/src/main/AndroidManifest.xml`.
+After a fresh clone, regenerate with the same `flutter create` command and re-add
+the manifest entries. `flutter analyze` is the check (0 issues) — there is no
+test suite. The complete current behavior is documented in
+[docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md).
 
 ## Docs vs. code drift (important)
 

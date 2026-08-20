@@ -75,10 +75,10 @@ class OnboardingScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                     color: Colors.white,
                     border: Border.all(
-                        color: Colors.white.withOpacity(.6), width: 2),
+                        color: Colors.white.withValues(alpha: .6), width: 2),
                     boxShadow: [
                       BoxShadow(
-                          color: Colors.black.withOpacity(.4),
+                          color: Colors.black.withValues(alpha: .4),
                           blurRadius: 30,
                           offset: const Offset(0, 16)),
                     ],
@@ -115,7 +115,7 @@ class OnboardingScreen extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
               children: [
-                Row(children: const [
+                const Row(children: [
                   Text('Bạn sẽ quét 2 mặt thẻ:',
                       style: TextStyle(
                           fontSize: 14,

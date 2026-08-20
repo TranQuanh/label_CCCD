@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../data/session/session_store.dart';
+import '../admin/admin_shell.dart';
 import '../auth/auth_screen.dart';
 import '../auth/change_password_screen.dart';
 
 /// Tab 3 — Tài khoản: thông tin người dùng + đăng xuất.
 ///
-/// Sửa so với bản cũ: khối "Thông tin tài khoản" lấy từ [AuthUser] chứ không suy
-/// từ hồ sơ gần nhất. Thông tin thẻ CCCD được tách thành một khối riêng có nhãn
-/// "Từ hồ sơ gần nhất" để không bị hiểu nhầm là danh tính đã xác thực của tài khoản.
+/// P1: thông tin lấy từ server qua `/api/v1/auth/me` ([AuthUser]) — không còn
+/// `dob` (bảng `tblUser` không có cột này). Thẻ CCCD vẫn hiển thị ở khối riêng
+/// có nhãn "Từ hồ sơ gần nhất" để không bị hiểu nhầm là danh tính đã xác thực.
+///
+/// Với vai trò `admin` hiện thêm mục "Quản trị hệ thống" (quản lý người dùng +
+/// nhật ký kiểm toán).
 class AccountTab extends StatelessWidget {
   const AccountTab({super.key});
 
@@ -20,9 +24,10 @@ class AccountTab extends StatelessWidget {
       builder: (context, _) {
         final name = sessionStore.displayName;
         final accountRows = <List<String>>[
-          ['Tên đăng nhập', name.isEmpty ? '—' : name],
+          ['Tên đăng nhập', name.isEmpty ? '—' : sessionStore.user?.username ?? '—'],
+          ['Họ và tên', name.isEmpty ? '—' : name],
           ['Email', sessionStore.email.isEmpty ? '—' : sessionStore.email],
-          ['Ngày sinh', sessionStore.dob.isEmpty ? '—' : sessionStore.dob],
+          ['Vai trò', _roleLabel(sessionStore.role)],
           ['Số hồ sơ đã tạo', sessionStore.records.length.toString()],
         ];
 
@@ -89,6 +94,18 @@ class AccountTab extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (sessionStore.user?.isAdmin ?? false) ...[
+                    const SizedBox(height: 12),
+                    _menuTile(
+                      context,
+                      icon: Icons.admin_panel_settings_outlined,
+                      label: 'Quản trị hệ thống',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                            builder: (_) => const AdminShell()),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   SizedBox(
                     height: 52,
@@ -118,10 +135,51 @@ class AccountTab extends StatelessWidget {
     );
   }
 
-  /// Đăng xuất phải **xoá dữ liệu phiên**, không chỉ điều hướng.
-  ///
-  /// Bản cũ giữ nguyên store singleton nên người dùng kế tiếp trên cùng thiết bị
-  /// nhìn thấy toàn bộ hồ sơ CCCD của người trước.
+  static String _roleLabel(String role) {
+    switch (role) {
+      case 'admin':
+        return 'Quản trị viên';
+      case 'operator':
+        return 'Cán bộ xử lý';
+      case 'viewer':
+        return 'Người xem';
+      default:
+        return role;
+    }
+  }
+
+  Widget _menuTile(BuildContext context,
+          {required IconData icon,
+          required String label,
+          required VoidCallback onTap}) =>
+      Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: Border.all(color: AppColors.lineSoft),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+            child: Row(children: [
+              Icon(icon, size: 20, color: AppColors.cobalt),
+              const SizedBox(width: 12),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.ink)),
+              const Spacer(),
+              const Icon(Icons.chevron_right, color: Color(0xFFB0BBD2)),
+            ]),
+          ),
+        ),
+      );
+
+  /// Đăng xuất phải **xoá dữ liệu phiên + token trên thiết bị**, không chỉ điều
+  /// hướng. Backend thu hồi refresh token + blacklist access token (best-effort).
   Future<void> _confirmLogout(BuildContext context) async {
     final navigator = Navigator.of(context);
     final ok = await showDialog<bool>(
@@ -143,7 +201,7 @@ class AccountTab extends StatelessWidget {
       ),
     );
     if (ok != true) return;
-    sessionStore.logout();
+    await sessionStore.logout();
     navigator.pushAndRemoveUntil(
       MaterialPageRoute<void>(builder: (_) => const AuthScreen()),
       (r) => false,
@@ -169,9 +227,9 @@ class AccountTab extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(.12),
+                color: Colors.white.withValues(alpha: .12),
                 border:
-                    Border.all(color: AppColors.star.withOpacity(.6), width: 2),
+                    Border.all(color: AppColors.star.withValues(alpha: .6), width: 2),
               ),
               child: Text(sessionStore.initial,
                   style: const TextStyle(

@@ -52,9 +52,9 @@ class CustomTextField extends StatelessWidget {
   Color get _glow {
     switch (status) {
       case FieldStatus.valid:
-        return AppColors.valid.withOpacity(.10);
+        return AppColors.valid.withValues(alpha: .10);
       case FieldStatus.warning:
-        return AppColors.warn.withOpacity(.12);
+        return AppColors.warn.withValues(alpha: .12);
       case FieldStatus.pending:
         return Colors.transparent;
     }

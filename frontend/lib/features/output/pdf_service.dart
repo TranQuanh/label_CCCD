@@ -65,11 +65,11 @@ class PdfService {
           pw.Center(
             child: pw.Column(children: [
               pw.Text('CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM',
-                  style: pw.TextStyle(
+                  style: const pw.TextStyle(
                       fontSize: 12, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 3),
               pw.Text('Độc lập – Tự do – Hạnh phúc',
-                  style: pw.TextStyle(
+                  style: const pw.TextStyle(
                       fontSize: 12, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 5),
               pw.Container(width: 150, height: 1, color: PdfColors.black),
@@ -79,7 +79,7 @@ class PdfService {
           pw.Center(
             child: pw.Text(formType.title.toUpperCase(),
                 textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(
+                style: const pw.TextStyle(
                     fontSize: 16, fontWeight: pw.FontWeight.bold)),
           ),
           pw.SizedBox(height: 5),
@@ -99,18 +99,18 @@ class PdfService {
             alignment: pw.Alignment.centerRight,
             child: pw.Column(children: [
               pw.Text(dateStr,
-                  style: pw.TextStyle(
+                  style: const pw.TextStyle(
                       fontSize: 11, fontStyle: pw.FontStyle.italic)),
               pw.SizedBox(height: 4),
               pw.Text('NGƯỜI KHAI',
-                  style: pw.TextStyle(
+                  style: const pw.TextStyle(
                       fontSize: 12, fontWeight: pw.FontWeight.bold)),
               pw.Text('(Ký, ghi rõ họ tên)',
                   style: const pw.TextStyle(
                       fontSize: 10, color: PdfColors.grey700)),
               pw.SizedBox(height: 40),
               pw.Text(card.fullName,
-                  style: pw.TextStyle(
+                  style: const pw.TextStyle(
                       fontSize: 13,
                       fontWeight: pw.FontWeight.bold,
                       color: PdfColor.fromInt(0xFF0A2A66))),
@@ -136,7 +136,7 @@ class PdfService {
           ),
         ),
         child: pw.Text(title,
-            style: pw.TextStyle(
+            style: const pw.TextStyle(
                 fontSize: 12,
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColor.fromInt(0xFF0A2A66))),
@@ -163,7 +163,7 @@ class PdfService {
                       ),
                       pw.Expanded(
                         child: pw.Text(r[1],
-                            style: pw.TextStyle(
+                            style: const pw.TextStyle(
                                 fontSize: 11,
                                 fontWeight: pw.FontWeight.bold)),
                       ),

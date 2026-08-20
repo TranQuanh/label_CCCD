@@ -2,15 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/validation/validators.dart';
+import '../../data/api/api_exception.dart';
 import '../../data/session/session_store.dart';
 import '../shell/home_shell.dart';
 
 /// Màn hình 1 — Đăng nhập / Đăng ký.
 ///
-/// Lưu ý phạm vi: đây là form **cục bộ**, chưa có xác thực thật. Không có token,
-/// không có phiên phía server, mật khẩu không rời khỏi máy. Trước khi đưa vào sử
-/// dụng thật phải nối vào một dịch vụ xác thực và bỏ dòng cam kết bảo mật ở dưới
-/// nếu chưa triển khai đúng như cam kết.
+/// P1: đã nối xác thực thật với backend `/api/v1/auth/*` (JWT + refresh token
+/// trong Secure Storage). Đăng nhập bằng **email HOẶC tên đăng nhập** — một
+/// trường duy nhất, backend phân biệt qua ký tự `@`.
+///
+/// Mật khẩu ≥ 8 ký tự, có chữ và số (khớp `backend/security.py`). Chế độ mock
+/// (`ApiConfig.useMock`) vẫn chạy cục bộ không cần server.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -21,42 +24,75 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   bool _register = false;
   bool _showPw = false;
-  final _user = TextEditingController();
+  bool _submitting = false;
+  final _identifier = TextEditingController();
+  final _username = TextEditingController();
+  final _fullName = TextEditingController();
   final _email = TextEditingController();
   final _pw = TextEditingController();
-  final _dob = TextEditingController();
   Map<String, String> _err = {};
+  String? _apiError;
 
   @override
   void dispose() {
-    _user.dispose();
+    _identifier.dispose();
+    _username.dispose();
+    _fullName.dispose();
     _email.dispose();
     _pw.dispose();
-    _dob.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final e = <String, String>{};
-    if (_user.text.trim().isEmpty) e['user'] = 'Vui lòng nhập tên đăng nhập';
-    if (_pw.text.length < 6) e['pw'] = 'Mật khẩu tối thiểu 6 ký tự';
+    if (!Validators.strongPassword(_pw.text)) {
+      e['pw'] = 'Mật khẩu tối thiểu 8 ký tự, có chữ và số';
+    }
     if (_register) {
+      if (!Validators.username(_username.text)) {
+        e['username'] = 'Tên đăng nhập 3–32 ký tự (chữ/số/_), bắt đầu bằng chữ';
+      }
       if (!Validators.email(_email.text)) e['email'] = 'Email không hợp lệ';
-      if (!Validators.pastDate(_dob.text)) {
-        e['dob'] = 'Ngày sinh phải có thật, định dạng DD/MM/YYYY';
+    } else {
+      if (_identifier.text.trim().isEmpty) {
+        e['identifier'] = 'Vui lòng nhập email hoặc tên đăng nhập';
       }
     }
-    setState(() => _err = e);
+    setState(() {
+      _err = e;
+      _apiError = null;
+    });
     if (e.isNotEmpty) return;
 
-    sessionStore.login(AuthUser(
-      username: _user.text.trim(),
-      email: _register ? _email.text.trim() : sessionStore.email,
-      dob: _register ? _dob.text.trim() : sessionStore.dob,
-    ));
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const HomeShell()),
-    );
+    setState(() => _submitting = true);
+    try {
+      if (_register) {
+        await sessionStore.register(
+          username: _username.text.trim(),
+          email: _email.text.trim(),
+          password: _pw.text,
+          fullName: _fullName.text.trim(),
+        );
+      } else {
+        await sessionStore.login(
+          identifier: _identifier.text.trim(),
+          password: _pw.text,
+        );
+      }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const HomeShell()),
+      );
+    } on ApiException catch (err) {
+      if (mounted) setState(() => _apiError = err.userMessage);
+    } catch (_) {
+      if (mounted) {
+        setState(() =>
+            _apiError = 'Không kết nối được máy chủ. Thử lại sau.');
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   @override
@@ -84,52 +120,102 @@ class _AuthScreenState extends State<AuthScreen> {
                     ]),
                   ),
                   const SizedBox(height: 22),
-                  _field('Tên đăng nhập', _user,
-                      hint: 'nguyenvana', error: _err['user']),
                   if (_register) ...[
+                    _field('Tên đăng nhập', _username,
+                        hint: 'nguyenvana', error: _err['username']),
+                    const SizedBox(height: 15),
+                    _field('Họ và tên', _fullName,
+                        hint: 'Nguyễn Văn A', error: _err['fullName']),
                     const SizedBox(height: 15),
                     _field('Email', _email,
                         hint: 'email@example.com',
                         error: _err['email'],
                         keyboardType: TextInputType.emailAddress),
-                  ],
-                  const SizedBox(height: 15),
-                  _field('Mật khẩu', _pw,
-                      hint: '••••••••',
-                      error: _err['pw'],
-                      obscure: !_showPw,
-                      trailing: GestureDetector(
-                        onTap: () => setState(() => _showPw = !_showPw),
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 14),
-                          child: Text(_showPw ? 'Ẩn' : 'Hiện',
-                              style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.cobalt)),
-                        ),
-                      )),
-                  if (_register) ...[
                     const SizedBox(height: 15),
-                    _field('Ngày sinh', _dob,
-                        hint: 'DD / MM / YYYY', error: _err['dob']),
+                    _field('Mật khẩu', _pw,
+                        hint: 'Tối thiểu 8 ký tự, có chữ và số',
+                        error: _err['pw'],
+                        obscure: !_showPw,
+                        trailing: GestureDetector(
+                          onTap: () => setState(() => _showPw = !_showPw),
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 14),
+                            child: Text(_showPw ? 'Ẩn' : 'Hiện',
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.cobalt)),
+                          ),
+                        )),
+                  ] else ...[
+                    _field('Email hoặc tên đăng nhập', _identifier,
+                        hint: 'nguyenvana@demo.vn',
+                        error: _err['identifier'],
+                        keyboardType: TextInputType.emailAddress),
+                    const SizedBox(height: 15),
+                    _field('Mật khẩu', _pw,
+                        hint: '••••••••',
+                        error: _err['pw'],
+                        obscure: !_showPw,
+                        trailing: GestureDetector(
+                          onTap: () => setState(() => _showPw = !_showPw),
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 14),
+                            child: Text(_showPw ? 'Ẩn' : 'Hiện',
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.cobalt)),
+                          ),
+                        )),
+                  ],
+                  if (_apiError != null) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFDECEA),
+                        borderRadius: BorderRadius.circular(10),
+                        border:
+                            Border.all(color: const Color(0xFFF3C6C3), width: 1),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.error_outline,
+                            size: 17, color: AppColors.flagRed),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(_apiError!,
+                              style: const TextStyle(
+                                  fontSize: 12.5, color: AppColors.flagRed)),
+                        ),
+                      ]),
+                    ),
                   ],
                   const SizedBox(height: 22),
                   SizedBox(
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: _submit,
+                      onPressed: _submitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.flagRed,
                         foregroundColor: Colors.white,
                         elevation: 0,
+                        disabledBackgroundColor:
+                            AppColors.flagRed.withValues(alpha: .5),
                         shape: RoundedRectangleBorder(
                             borderRadius:
                                 BorderRadius.circular(AppRadius.button)),
                       ),
-                      child: Text(_register ? 'Tạo tài khoản' : 'Đăng nhập',
-                          style: const TextStyle(
-                              fontSize: 17, fontWeight: FontWeight.w700)),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.4, color: Colors.white))
+                          : Text(_register ? 'Tạo tài khoản' : 'Đăng nhập',
+                              style: const TextStyle(
+                                  fontSize: 17, fontWeight: FontWeight.w700)),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -177,6 +263,7 @@ class _AuthScreenState extends State<AuthScreen> {
   void _switch(bool register) => setState(() {
         _register = register;
         _err = {};
+        _apiError = null;
       });
 
   Widget _header(BuildContext context) => Container(
@@ -198,9 +285,9 @@ class _AuthScreenState extends State<AuthScreen> {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(.10),
+                color: Colors.white.withValues(alpha: .10),
                 border:
-                    Border.all(color: AppColors.star.withOpacity(.7), width: 2),
+                    Border.all(color: AppColors.star.withValues(alpha: .7), width: 2),
               ),
               child: const Text('★',
                   style: TextStyle(color: AppColors.star, fontSize: 32)),
@@ -234,7 +321,7 @@ class _AuthScreenState extends State<AuthScreen> {
               boxShadow: active
                   ? [
                       BoxShadow(
-                          color: AppColors.navy.withOpacity(.12),
+                          color: AppColors.navy.withValues(alpha: .12),
                           blurRadius: 6,
                           offset: const Offset(0, 2))
                     ]
@@ -277,6 +364,7 @@ class _AuthScreenState extends State<AuthScreen> {
           controller: c,
           obscureText: obscure,
           keyboardType: keyboardType,
+          enabled: !_submitting,
           style: const TextStyle(fontSize: 15, color: AppColors.ink),
           decoration: InputDecoration(
             isDense: true,

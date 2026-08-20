@@ -31,5 +31,12 @@ uvicorn>=0.29.0
 python-multipart>=0.0.9       # bắt buộc cho UploadFile
 pyngrok>=7.0.0                # public URL khi deploy trên Colab
 
+# ── Auth & dữ liệu (P1) ──────────────────────────────────────────────────
+psycopg[binary]>=3.1          # PostgreSQL driver (psycopg3)
+psycopg-pool>=3.1             # ConnectionPool cho psycopg3
+redis>=5.0.0                  # Redis client (blacklist token, batch queue)
+pyjwt>=2.8.0                  # JWT access token
+bcrypt>=4.0.0                 # hash mật khẩu (Bcrypt)
+
 # Optional: tăng tốc inference (cần CUDA >= 11.8 + GCC)
 # pip install flash-attn --no-build-isolation

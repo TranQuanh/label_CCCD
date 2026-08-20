@@ -8,8 +8,8 @@ Chạy được trên một GPU nhỏ (Colab T4 15GB / L4 24GB).
 
 | Thư mục | Vai trò | Ngôn ngữ |
 |---|---|---|
-| [`frontend/`](frontend/) | App Flutter: quét 2 mặt thẻ → đối chiếu → xuất biểu mẫu PDF | Dart |
-| [`backend/`](backend/) | Service FastAPI: nạp model 4-bit + adapter, phục vụ `/extract-cccd/` | Python |
+| [`frontend/`](frontend/) | App Flutter: đăng nhập (JWT) + quét 2 mặt thẻ → đối chiếu → xuất biểu mẫu PDF + quản trị người dùng (admin) | Dart |
+| [`backend/`](backend/) | Service FastAPI: **API `/api/v1/*` (auth + RBAC + audit) + serving `/extract-cccd/*`** (model 4-bit + adapter) | Python |
 | [`model/`](model/) | Pipeline ML: gán nhãn → huấn luyện → đánh giá → so sánh kiến trúc | Python |
 
 Thư mục phụ: [`docs/`](docs/) (kiến trúc, kế hoạch so sánh, changelog, phân tích
@@ -70,6 +70,8 @@ python scripts/evaluate.py --test_jsonl data/dataset/test.jsonl \
 MODEL_KEY=internvl CHECKPOINT_DIR=checkpoints uvicorn backend.main:app --host 0.0.0.0 --port 8000
 # POST 1 ảnh  → http://localhost:8000/extract-cccd/?side=truoc
 # POST N ảnh  → http://localhost:8000/extract-cccd/batch
+# API người dùng → http://localhost:8000/api/v1/*   (auth/register, auth/login, users, audit-logs, forms)
+# Chạy không cần GPU để test luồng user: SKIP_MODEL_LOAD=1 uvicorn backend.main:app --port 8000
 
 # 5. App di động (xem frontend/README.md để dựng scaffold trước)
 cd frontend && flutter run --dart-define=USE_MOCK=false \
@@ -84,6 +86,10 @@ cd frontend && flutter run --dart-define=USE_MOCK=false \
 - **Một nguồn chân lý cho cấu hình đa model**: `model/src/models/vlm_registry.py` —
   tách rõ cái phải **giống nhau** giữa các kiến trúc (LoRA target, ảnh 1024px)
   khỏi cái **bị kiến trúc ép** (max_length, processor kwargs).
+- **Xác thực + RBAC thật**: backend `/api/v1/*` (JWT + refresh token, bcrypt,
+  lockout, thu hồi token khi đổi quyền, audit log append-only) — xem
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) cho 11 quyết định chốt các mâu
+  thuẫn giữa các tài liệu yêu cầu.
 - **Vừa một GPU nhỏ**: NF4 + double-quant, đóng băng vision tower, LoRA chỉ trên
   language model; InternVL3.5-2B chạy hết 2.6 GB VRAM.
 - **Mọi artifact lưu Google Drive** → Colab ngắt không mất tiến độ.

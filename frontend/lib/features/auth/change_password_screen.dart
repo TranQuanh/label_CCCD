@@ -108,7 +108,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   height: 34,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.12),
+                    color: Colors.white.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Icon(Icons.arrow_back,
@@ -217,7 +217,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   color: AppColors.tint,
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: Row(children: const [
+                child: const Row(children: [
                   Icon(Icons.lock_outline, size: 16, color: AppColors.cobalt),
                   SizedBox(width: 9),
                   Expanded(
@@ -366,7 +366,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                                 ? [
                                     BoxShadow(
                                         color:
-                                            AppColors.cobalt.withOpacity(.14),
+                                            AppColors.cobalt.withValues(alpha: .14),
                                         spreadRadius: 3,
                                         blurRadius: 0)
                                   ]
@@ -486,7 +486,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   color: AppColors.valid,
                   boxShadow: [
                     BoxShadow(
-                        color: AppColors.valid.withOpacity(.4),
+                        color: AppColors.valid.withValues(alpha: .4),
                         blurRadius: 30,
                         offset: const Offset(0, 14)),
                   ],

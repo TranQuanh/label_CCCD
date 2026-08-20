@@ -138,12 +138,12 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
           const Text('Mỗi mặt mất khoảng 11–20 giây.',
               style: TextStyle(fontSize: 12.5, color: AppColors.onNavy)),
           const SizedBox(height: 26),
-          Text(
+          const Text(
               ApiConfig.useMock
                   ? 'Chế độ mock — không gọi máy chủ'
                   : 'POST ${ApiConfig.extractPath}  ·  ${ApiConfig.baseUrl}',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11.5,
                   color: AppColors.onNavy,
                   fontFamily: 'monospace')),
@@ -166,7 +166,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.flagRed.withOpacity(.18),
+                color: AppColors.flagRed.withValues(alpha: .18),
                 border: Border.all(color: AppColors.flagRed, width: 2),
               ),
               child: const Icon(Icons.cloud_off,
@@ -214,7 +214,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
                         TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
-                  side: BorderSide(color: Colors.white.withOpacity(.4), width: 1.5),
+                  side: BorderSide(color: Colors.white.withValues(alpha: .4), width: 1.5),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadius.button)),
                 ),

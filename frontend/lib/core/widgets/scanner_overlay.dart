@@ -61,7 +61,7 @@ class _ScannerOverlayState extends State<ScannerOverlay>
             IgnorePointer(
               child: ClipPath(
                 clipper: _HoleClipper(rrect),
-                child: Container(color: Colors.black.withOpacity(.72)),
+                child: Container(color: Colors.black.withValues(alpha: .72)),
               ),
             ),
             // Khung + đường quét
@@ -85,7 +85,7 @@ class _ScannerOverlayState extends State<ScannerOverlay>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                   decoration: BoxDecoration(
-                    color: AppColors.navy.withOpacity(.9),
+                    color: AppColors.navy.withValues(alpha: .9),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(widget.hint,
@@ -183,9 +183,9 @@ class _FramePainter extends CustomPainter {
     final y = size.height * progress;
     final scan = Paint()
       ..shader = LinearGradient(colors: [
-        AppColors.star.withOpacity(0),
+        AppColors.star.withValues(alpha: 0),
         AppColors.star,
-        AppColors.star.withOpacity(0),
+        AppColors.star.withValues(alpha: 0),
       ]).createShader(Rect.fromLTWH(0, y - 2, size.width, 4));
     canvas.drawRect(Rect.fromLTWH(8, y, size.width - 16, 3), scan);
   }

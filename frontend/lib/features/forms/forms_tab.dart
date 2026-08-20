@@ -81,7 +81,7 @@ class FormsTab extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(.12),
+                    color: Colors.white.withValues(alpha: .12),
                     border: Border.all(color: Colors.white24, width: 1.5),
                   ),
                   child: Text(sessionStore.initial,
@@ -95,9 +95,9 @@ class FormsTab extends StatelessWidget {
               padding:
                   const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(.08),
+                color: Colors.white.withValues(alpha: .08),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white.withOpacity(.14)),
+                border: Border.all(color: Colors.white.withValues(alpha: .14)),
               ),
               child: Row(children: [
                 Container(
@@ -155,7 +155,7 @@ class _FormCard extends StatelessWidget {
           ),
           boxShadow: [
             BoxShadow(
-                color: AppColors.navy.withOpacity(.05),
+                color: AppColors.navy.withValues(alpha: .05),
                 blurRadius: 12,
                 offset: const Offset(0, 5)),
           ],

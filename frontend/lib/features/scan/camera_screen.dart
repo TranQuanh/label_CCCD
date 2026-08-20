@@ -244,7 +244,7 @@ class _CameraScreenState extends State<CameraScreen> {
           height: 36,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(.4),
+            color: Colors.black.withValues(alpha: .4),
             shape: BoxShape.circle,
           ),
           child: icon,
@@ -270,7 +270,7 @@ class _CameraScreenState extends State<CameraScreen> {
                         height: 52,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(.12),
+                          color: Colors.white.withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.white24),
                         ),

@@ -46,6 +46,7 @@ import torch
 from fastapi import FastAPI, File, Query, UploadFile
 from PIL import Image
 
+from . import auth, audit, config, db, forms, redis_client, users
 from src.data_pipeline.auto_label import parse_json_safe
 from src.models.vlm_registry import (
     VLMSpec,
@@ -470,24 +471,43 @@ def run_inference(image: Image.Image, side: CardSide) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model 1 lần lúc khởi động, dọn dẹp khi tắt."""
-    STATE["model"], STATE["processor"] = load_inference_model(
-        BASE_MODEL, CHECKPOINT_DIR, MODEL_KEY, ADAPTER_DIR
-    )
+    """Khởi tạo DB/Redis + load model (trừ chế độ lite), dọn dẹp khi tắt."""
+    db.init_db()
+    redis_client.get_redis()
+
+    if config.SKIP_MODEL_LOAD:
+        logger.warning(
+            "SKIP_MODEL_LOAD=1 → chế độ lite: KHÔNG nạp model. "
+            "/extract-cccd/* sẽ trả 503. Auth/forms/audit vẫn hoạt động bình thường."
+        )
+    else:
+        STATE["model"], STATE["processor"] = load_inference_model(
+            BASE_MODEL, CHECKPOINT_DIR, MODEL_KEY, ADAPTER_DIR
+        )
     yield
     unload_model()
+    db.close_db()
 
 
-app = FastAPI(title="CCCD Extraction API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="CCCD Extraction API", version="2.1.0", lifespan=lifespan)
+
+# ── P1: xác thực & quản lý tài khoản — toàn bộ app API gom dưới /api/v1 ─────
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
+app.include_router(audit.router, prefix="/api/v1")
+app.include_router(forms.router, prefix="/api/v1")
 
 
 @app.get("/health")
 def health() -> dict:
-    """Model nào đang phục vụ, adapter mặt nào đã nạp, trần batch bao nhiêu."""
+    """Trạng thái model + DB + Redis + trần batch."""
     spec = STATE["spec"]
     return {
         "status": "ok",
         "model_loaded": STATE["model"] is not None,
+        "lite_mode": config.SKIP_MODEL_LOAD,
+        "db": db.ping(),
+        "redis": redis_client.get_redis() is not None,
         "model_key": spec.key if spec else None,
         "model_id": spec.model_id if spec else None,
         "params_b": spec.params_b if spec else None,
@@ -564,6 +584,13 @@ def extract_cccd(
     Returns:
         dict gồm: filename, side, parse_ok, data (JSON đã parse), raw output và latency_ms.
     """
+    if STATE["model"] is None:
+        return {
+            "filename": file.filename,
+            "error": "Model chưa được nạp (chế độ lite — SKIP_MODEL_LOAD=1). "
+                     "Bỏ cờ này để phục vụ trích xuất.",
+        }
+
     image, error = decode_upload(file)
     if image is None:
         return {"filename": file.filename, "error": error}
@@ -601,6 +628,13 @@ def extract_cccd_batch(
         dict gồm `results` (đúng thứ tự file gửi lên) và khối `timing`
         (total_ms, ms_per_image, images_per_sec) để đo hiệu năng.
     """
+    if STATE["model"] is None:
+        return {
+            "n_images": len(files),
+            "error": "Model chưa được nạp (chế độ lite — SKIP_MODEL_LOAD=1). "
+                     "Bỏ cờ này để phục vụ trích xuất.",
+        }
+
     results: List[Optional[dict]] = [None] * len(files)
     images: List[Image.Image] = []
     sides: List[CardSide] = []

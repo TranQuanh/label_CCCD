@@ -40,9 +40,9 @@ class RecordsTab extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 9),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(.08),
+                      color: Colors.white.withValues(alpha: .08),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white.withOpacity(.14)),
+                      border: Border.all(color: Colors.white.withValues(alpha: .14)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -160,7 +160,7 @@ class _RecordCard extends StatelessWidget {
           border: Border.all(color: AppColors.lineSoft),
           boxShadow: [
             BoxShadow(
-                color: AppColors.navy.withOpacity(.05),
+                color: AppColors.navy.withValues(alpha: .05),
                 blurRadius: 12,
                 offset: const Offset(0, 5)),
           ],

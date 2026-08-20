@@ -5,12 +5,14 @@
 
 ## Chạy lần đầu
 
-Thư mục này **chỉ có `lib/` + `pubspec.yaml`**, chưa có scaffold platform, nên
-`flutter run` sẽ báo lỗi ngay. Sinh scaffold trước:
+Repo **không commit scaffold platform** (xem `.gitignore` gốc), nhưng máy phát
+triển hiện tại đã sinh sẵn (`flutter create . --project-name smartid
+--org vn.smartid` → applicationId `vn.smartid.smartid`). Sau khi clone mới hoặc
+xóa `android/ ios/`, sinh lại:
 
 ```bash
 cd frontend
-flutter create .          # sinh android/ ios/ (giữ nguyên lib/ và pubspec.yaml)
+flutter create . --project-name smartid --org vn.smartid   # sinh scaffold, giữ nguyên lib/ và pubspec.yaml
 flutter pub get
 ```
 
@@ -37,6 +39,13 @@ Sau đó khai quyền — `camera` và `image_picker` không tự thêm:
 - Gọi HTTP **không mã hoá** tới máy chủ trong LAN thì Android 9+ chặn mặc định.
   Khi thử nghiệm, thêm `android:usesCleartextTraffic="true"` vào thẻ
   `<application>`; khi triển khai thật thì dùng HTTPS thay vì mở cleartext.
+  Manifest hiện tại đã có sẵn CAMERA/INTERNET + cleartext.
+
+## Kiểm tra
+
+```bash
+flutter analyze      # đã đạt 0 lỗi
+```
 
 ## Chạy với backend thật
 
