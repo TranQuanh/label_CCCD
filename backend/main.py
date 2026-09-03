@@ -31,7 +31,7 @@ Chạy:
 """
 
 from __future__ import annotations
-
+import requests
 import io
 import json
 import logging
@@ -41,7 +41,6 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-
 import torch
 from fastapi import FastAPI, File, Query, UploadFile
 from PIL import Image
@@ -57,7 +56,7 @@ from src.models.vlm_registry import (
     resolve,
 )
 from src.utils.cccd_schema import SYSTEM_PROMPT, CardSide, build_user_prompt
-
+INFERENCE_SERVER_URL = config.INFERENCE_SERVER_URL
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -489,21 +488,14 @@ def run_inference(image: Image.Image, side: CardSide) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Khởi tạo DB/Redis + load model (trừ chế độ lite), dọn dẹp khi tắt."""
+    """Khởi tạo DB/Redis và bỏ qua việc nạp model local."""
     db.init_db()
     redis_client.get_redis()
 
-    if config.SKIP_MODEL_LOAD:
-        logger.warning(
-            "SKIP_MODEL_LOAD=1 → chế độ lite: KHÔNG nạp model. "
-            "/extract-cccd/* sẽ trả 503. Auth/forms/audit vẫn hoạt động bình thường."
-        )
-    else:
-        STATE["model"], STATE["processor"] = load_inference_model(
-            BASE_MODEL, CHECKPOINT_DIR, MODEL_KEY, ADAPTER_DIR
-        )
+    logger.info(f"🚀 Chạy chế độ Proxy: Chuyển tiếp AI inference lên {INFERENCE_SERVER_URL}")
+    
     yield
-    unload_model()
+    
     db.close_db()
 
 
@@ -596,39 +588,46 @@ def extract_cccd(
     side: str = Query("auto", description="truoc | sau | auto (suy từ tên file)"),
 ) -> dict:
     """
-    Trích xuất thông tin CCCD từ ảnh upload.
-
-    Args:
-        file: File ảnh upload.
-        side: 'truoc'/'sau' để ép mặt thẻ, hoặc 'auto' để suy từ tên file.
-
-    Returns:
-        dict gồm: filename, side, parse_ok, data (JSON đã parse), raw output và latency_ms.
+    Proxy endpoint: Tiếp nhận ảnh từ Flutter, gửi sang Colab GPU và in log kiểm tra.
     """
-    if STATE["model"] is None:
-        return {
-            "filename": file.filename,
-            "error": "Model chưa được nạp (chế độ lite — SKIP_MODEL_LOAD=1). "
-                     "Bỏ cờ này để phục vụ trích xuất.",
-        }
-
-    image, error = decode_upload(file)
-    if image is None:
-        return {"filename": file.filename, "error": error}
-
-    card_side, error = resolve_or_error(side, file.filename)
-    if card_side is None:
-        return {"filename": file.filename, "error": error}
-
     try:
-        t0 = time.perf_counter()
-        raw = run_inference(image, card_side)
-        result = build_result(file.filename, card_side, raw)
-        result["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        # 1. Đọc file upload
+        file_bytes = file.file.read()
+        files_payload = {"file": (file.filename, file_bytes, file.content_type)}
+
+        # 2. Chuyển tiếp request sang Colab Inference Server
+        logger.info(f"🚀 [PROXY REQUEST] Gửi ảnh '{file.filename}' (side={side}) sang Colab...")
+        
+        response = requests.post(
+            f"{INFERENCE_SERVER_URL}/extract-cccd/",
+            params={"side": side},
+            files=files_payload,
+            timeout=120,
+        )
+        
+        result = response.json()
+
+        # 3. 🔍 IN LOG CHI TIẾT KẾT QUẢ TRẢ VỀ TỪ COLAB
+        card_side = result.get("side", side)
+        logger.info(f"================ COLAB RESPONSE [{card_side}] ================")
+        logger.info(f"📁 Filename : {result.get('filename')}")
+        logger.info(f"⏱️ Latency  : {result.get('latency_ms')} ms")
+        logger.info(f"✅ Parse OK : {result.get('parse_ok')}")
+        
+        if result.get("data"):
+            logger.info("📄 PARSED DATA (JSON từ Model):")
+            logger.info(json.dumps(result.get("data"), ensure_ascii=False, indent=2))
+        else:
+            logger.warning(f"⚠️ RAW OUTPUT (Không parse được JSON): {result.get('raw')}")
+            logger.warning(f"⚠️ Lỗi (nếu có): {result.get('error')}")
+            
+        logger.info("============================================================")
+
         return result
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Lỗi inference")
-        return {"filename": file.filename, "error": str(exc)}
+
+    except Exception as exc:
+        logger.exception("❌ Lỗi kết nối Proxy tới Colab Server")
+        return {"filename": file.filename, "error": f"Lỗi Proxy Colab: {str(exc)}"}
 
 
 @app.post("/extract-cccd/batch")
@@ -636,68 +635,20 @@ def extract_cccd_batch(
     files: List[UploadFile] = File(..., description="Nhiều ảnh CCCD (jpg/png)"),
     side: str = Query("auto", description="truoc | sau | auto (suy từ tên từng file)"),
 ) -> dict:
-    """
-    Trích xuất nhiều ảnh trong cùng một request, chạy theo lô trên GPU.
-
-    Ảnh khác mặt thẻ trộn chung được — chúng được gom nhóm theo mặt và mỗi nhóm
-    chạy bằng adapter của mặt đó. Lô lớn hơn `MAX_BATCH_SIZE` (env) tự cắt chunk.
-
-    Ảnh hỏng hoặc thuộc mặt chưa có adapter chỉ nhận `error` ở đúng vị trí của nó,
-    phần còn lại vẫn chạy bình thường.
-
-    Returns:
-        dict gồm `results` (đúng thứ tự file gửi lên) và khối `timing`
-        (total_ms, ms_per_image, images_per_sec) để đo hiệu năng.
-    """
-    if STATE["model"] is None:
-        return {
-            "n_images": len(files),
-            "error": "Model chưa được nạp (chế độ lite — SKIP_MODEL_LOAD=1). "
-                     "Bỏ cờ này để phục vụ trích xuất.",
-        }
-
-    results: List[Optional[dict]] = [None] * len(files)
-    images: List[Image.Image] = []
-    sides: List[CardSide] = []
-    slots: List[int] = []  # vị trí gốc của từng ảnh hợp lệ trong `results`
-
-    for index, file in enumerate(files):
-        image, error = decode_upload(file)
-        if image is None:
-            results[index] = {"filename": file.filename, "error": error}
-            continue
-        card_side, error = resolve_or_error(side, file.filename)
-        if card_side is None:
-            results[index] = {"filename": file.filename, "error": error}
-            continue
-        images.append(image)
-        sides.append(card_side)
-        slots.append(index)
-
-    t0 = time.perf_counter()
     try:
-        raws = run_inference_batch(images, sides)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Lỗi inference theo lô")
-        return {"error": str(exc), "n_images": len(images)}
-    total_ms = (time.perf_counter() - t0) * 1000
-
-    for slot, card_side, raw in zip(slots, sides, raws):
-        results[slot] = build_result(files[slot].filename, card_side, raw)
-
-    n_ok = len(images)
-    return {
-        "n_images": len(files),
-        "model_key": STATE["spec"].key if STATE["spec"] else None,
-        "results": results,
-        "timing": {
-            "total_ms": round(total_ms, 1),
-            "ms_per_image": round(total_ms / n_ok, 1) if n_ok else None,
-            "images_per_sec": round(n_ok / (total_ms / 1000), 3) if total_ms else None,
-            "max_batch_size": MAX_BATCH_SIZE,
-            "n_sides": len(set(sides)),
-        },
-    }
+        # Gói toàn bộ list files để gửi đi
+        files_payload = [("files", (f.filename, f.file, f.content_type)) for f in files]
+        
+        response = requests.post(
+            f"{INFERENCE_SERVER_URL}/extract-cccd/batch",
+            params={"side": side},
+            files=files_payload,
+            timeout=300 # Chờ lô lớn
+        )
+        return response.json()
+    except Exception as exc:
+        logger.exception("Lỗi kết nối tới Colab Server (Batch)")
+        return {"error": f"Lỗi Proxy Colab: {str(exc)}", "n_images": len(files)}
 
 
 if __name__ == "__main__":
