@@ -161,29 +161,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON tblAuditLog(created_at DESC);
 -- P2 bổ sung cột `code`/`supp` — PostgreSQL không cho CREATE OR REPLACE đổi
 -- thứ tự cột nên phải DROP trước rồi tạo lại.
 -- ───────────────────────────────────────────────────────────────────────────
-DROP VIEW IF EXISTS v_scan_record_masked;
-CREATE VIEW v_scan_record_masked AS
-SELECT
-    r.id,
-    r.code,
-    r.user_id,
-    r.form_type_id,
-    r.review_status,
-    CASE
-        WHEN r.extracted_data ? 'so_cccd'
-        THEN r.extracted_data || jsonb_build_object(
-                 'so_cccd', left(r.extracted_data ->> 'so_cccd', 6) || '******'
-             )
-        ELSE r.extracted_data
-    END AS extracted_data,
-    r.supp,
-    r.confidence_scores,
-    r.parse_ok,
-    r.is_edited,
-    r.card_side,
-    r.created_at
-FROM tblScanRecord r
-WHERE r.review_status = 'reviewed';
+-- Xoá view mask vì không cần che số CCCD (user xem kết quả của chính mình)
+-- DROP VIEW IF EXISTS v_scan_record_masked;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- Seed: 3 loại biểu mẫu (khớp kFormTypes phía frontend)

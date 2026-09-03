@@ -34,3 +34,6 @@ frontend/web/
 .DS_Store
 .vscode/
 .idea/
+
+.android-sdk/
+android-user-home/

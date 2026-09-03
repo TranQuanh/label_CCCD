@@ -36,17 +36,46 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
+  /// Xử lý lưu hồ sơ với review status do USER tự kiểm định.
+  /// - Nếu user đã review xong → lưu là 'reviewed' (hiện toàn bộ cho user).
+  /// - Nếu user chưa review → lưu là 'pending' (chưa review).
   Future<void> _submit() async {
     if (_submitting) return;
     setState(() => _submitting = true);
 
-    // P2: gửi lên server (mã hồ sơ do SERVER cấp). Mock vẫn lưu RAM như cũ.
-    try {
-      final saved = await sessionStore.submitRecord(
-        formType: widget.formType,
-        card: widget.card,
-        supp: widget.supp,
-      );
+    // Hỏi user xem đã review xong chưa
+    final reviewConfirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xác nhận review'),
+        content: const Text(
+            'Bạn đã kiểm tra và sửa chữa thông tin trích xuất chưa?\n'
+            'Bấm "Đồng ý" để lưu hồ sơ vào lịch sử (trạng thái: Đã duyệt).\n'
+            'Bấm "Hủy" để quay lại review lại tiếp.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Hủy')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Đồng ý', style: TextStyle(color: AppColors.valid))),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    setState(() => _submitting = false);
+
+    if (reviewConfirmed == null || !reviewConfirmed) return;
+
+// User đã xác nhận review → lưu là 'reviewed' (hiện toàn bộ)
+      // (chế độ mock vẫn lưu RAM như cũ)
+      try {
+        final saved = await sessionStore.submitRecord(
+          formType: widget.formType,
+          card: widget.card,
+          supp: widget.supp,
+        );
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
         builder: (_) => SuccessScreen(

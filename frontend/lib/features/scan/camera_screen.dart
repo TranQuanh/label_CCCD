@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/scanner_overlay.dart';
 import '../../data/models/form_type.dart';
 import 'processing_screen.dart';
+import 'dart:async';
 
 /// Màn hình 4 — Camera & Quét: chụp mặt trước rồi mặt sau.
 ///
@@ -41,27 +42,69 @@ class _CameraScreenState extends State<CameraScreen> {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         if (mounted) {
-          setState(() => _error = 'Không tìm thấy camera trên thiết bị.');
+          setState(() => _error = 'Không tìm thấy camera, tự động chuyển sang thư viện ảnh.');
+          _pickFromGallery();
         }
         return;
       }
-      final back = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
+
+      // Try to find a back camera, fall back to any camera
+      CameraDescription? selectedCamera;
+
+      // First try to find back camera
+      for (final camera in cameras) {
+        if (camera.lensDirection == CameraLensDirection.back) {
+          selectedCamera = camera;
+          break;
+        }
+      }
+
+      // If no back camera, use first available
+      if (selectedCamera == null && cameras.isNotEmpty) {
+        selectedCamera = cameras.first;
+      }
+
+      if (selectedCamera == null) {
+        if (mounted) {
+          setState(() => _error = 'Không thể truy cập camera.');
+          _pickFromGallery();
+        }
+        return;
+      }
+
+      // Use a resolution that's more compatible with emulators
       final ctrl =
-          CameraController(back, ResolutionPreset.high, enableAudio: false);
-      await ctrl.initialize();
+          CameraController(selectedCamera, ResolutionPreset.medium, enableAudio: false);
+
+      // Initialize with timeout to prevent hanging
+      await ctrl.initialize().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw Exception('Camera initialization timeout'),
+      );
+
       if (!mounted) {
         await ctrl.dispose();
         return;
       }
+
+      // Small delay to let camera stabilize
+      await Future.delayed(const Duration(milliseconds: 500));
+
       setState(() {
         _controller = ctrl;
         _ready = true;
+        _error = null; // Clear any previous error
       });
+    } on TimeoutException catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Khởi tạo camera hết thời gian. Vui lòng thử lại hoặc sử dụng thư viện ảnh.');
+        _pickFromGallery();
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = 'Không mở được camera: $e');
+      if (mounted) {
+        setState(() => _error = 'Không mở được camera: $e\nTự động chuyển sang thư viện ảnh.');
+        _pickFromGallery();
+      }
     }
   }
 
@@ -150,7 +193,17 @@ class _CameraScreenState extends State<CameraScreen> {
               ? const Center(
                   child: CircularProgressIndicator(color: AppColors.star))
               : Stack(children: [
-                  Positioned.fill(child: CameraPreview(_controller!)),
+                  Positioned.fill(
+                    child: _controller != null
+                        ? CameraPreview(_controller!)
+                        : const Center(
+                            child: Icon(
+                              Icons.videocam,
+                              size: 64,
+                              color: Colors.white38,
+                            ),
+                          ),
+                  ),
                   Positioned.fill(
                     child: ScannerOverlay(
                       hint: _busy

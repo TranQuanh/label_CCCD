@@ -121,8 +121,7 @@ cột này. `isAdmin` = `role == 'admin'`. `fromJson` map `user_id` → `id`.
 - `loadForms()` — nạp danh mục từ `GET /api/v1/forms` (real), fallback `kFormTypes`.
 - `submitRecord({formType, card, supp})` — gọi `POST /scan-records`, trả hồ sơ có
   `code` **server cấp** (mock: mã tạm cục bộ).
-- `loadRecords()` — tải lịch sử từ `GET /scan-records`; viewer nhận `masked=true`.
-- `loadReviewQueue()` / `reviewRecord(id, approve: true)` — hàng đợi duyệt.
+- `loadRecords()` — tải lịch sử từ `GET /scan-records`.
 - `changePassword({currentPassword, newPassword})` — gọi `/auth/change-password`.
 
 `seedDemoRecords` chỉ chạy ở mock.

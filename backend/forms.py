@@ -65,9 +65,9 @@ class UpdateFormBody(BaseModel):
 
 
 def _serialize(row: dict) -> dict:
-    """1 dòng DB → JSON API (id = slug, required_fields = list {key,label,hint})."""
+    """1 dòng DB → JSON API (id = UUID thực tế, slug = khóa nghiệp vụ)."""
     return {
-        "id": row["slug"],
+        "id": str(row["id"]),
         "slug": row["slug"],
         "name": row["name"],
         "description": row["description"],
@@ -98,7 +98,7 @@ def get_form_or_404(slug: str) -> dict:
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy biểu mẫu")
-    return row
+    return _serialize(row)  # Sử dụng _serialize để đồng bộ format
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])

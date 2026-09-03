@@ -108,16 +108,6 @@ def discover_adapters(
 ) -> Dict[CardSide, Path]:
     """
     Tìm adapter của từng mặt thẻ cho model đang phục vụ.
-
-    Ưu tiên `adapter_dir` (cách cũ, 1 adapter) nếu được truyền; ngược lại quét
-    `{checkpoint_dir}/{model_key}-cccd-lora-{front,back}`.
-
-    Thiếu một mặt thì vẫn phục vụ mặt còn lại (InternVL hiện chỉ có adapter mặt
-    trước) — request cho mặt thiếu sẽ nhận lỗi rõ ràng thay vì bị chạy bằng adapter
-    của mặt kia và cho ra kết quả sai lặng lẽ.
-
-    Returns:
-        {CardSide: đường dẫn adapter}, rỗng nếu không có adapter nào.
     """
     if adapter_dir:
         path = Path(adapter_dir)
@@ -136,10 +126,47 @@ def discover_adapters(
         )
         return {CardSide.FRONT: path, CardSide.BACK: path}
 
+    found: Dict[CardSide, Path] = {}
+
+    # Check if they exist in result_front and result_back as requested by user
+    # These are expected to be at the project root level, possibly with front/back subdirectories
+    backend_dir = Path(__file__).parent.parent  # Go up two levels: backend/ -> project_root/
+    logger.debug("Checking for adapters in project root: %s", backend_dir)
+    for side, path_name in [(CardSide.FRONT, "result_front"), (CardSide.BACK, "result_back")]:
+        # First check in the front/back subdirectories
+        candidate_sub = backend_dir / path_name / SIDE_DIR_TOKEN[side]
+        logger.debug("Checking for %s adapter at subdir: %s", side.value, candidate_sub)
+        if candidate_sub.is_dir():
+            adapter_config = candidate_sub / "adapter_config.json"
+            if adapter_config.is_file():
+                found[side] = candidate_sub
+                logger.info("Found %s adapter at: %s", side.value, candidate_sub)
+            else:
+                logger.warning("Adapter directory %s exists but missing adapter_config.json", candidate_sub)
+        else:
+            logger.debug("Adapter subdirectory %s does not exist", candidate_sub)
+
+        # If not found in subdir, check directly in the result_front/result_back directory
+        if side not in found:
+            candidate_root = backend_dir / path_name
+            logger.debug("Checking for %s adapter at root: %s", side.value, candidate_root)
+            if candidate_root.is_dir():
+                adapter_config = candidate_root / "adapter_config.json"
+                if adapter_config.is_file():
+                    found[side] = candidate_root
+                    logger.info("Found %s adapter at: %s", side.value, candidate_root)
+                else:
+                    logger.warning("Adapter directory %s exists but missing adapter_config.json", candidate_root)
+            else:
+                logger.debug("Adapter directory %s does not exist", candidate_root)
+
+    if found:
+        logger.info("Tìm thấy adapter trong result_front / result_back: %s", found)
+        return found
+
     if not model_key:
         return {}
     root = Path(checkpoint_dir)
-    found: Dict[CardSide, Path] = {}
     for side, token in SIDE_DIR_TOKEN.items():
         candidate = root / f"{model_key}-cccd-lora-{token}"
         if (candidate / "adapter_config.json").is_file():
@@ -193,15 +220,8 @@ def load_inference_model(
 ) -> Tuple[object, object]:
     """
     Nạp base 4-bit MỘT lần rồi gắn adapter của TẤT CẢ các mặt tìm được.
-
-    Không có adapter nào → chạy base thuần (cảnh báo); hữu ích để đo mốc zero-shot.
-
-    Ghi thẳng vào `STATE` (spec, adapters, active) rồi trả (model, processor) —
-    `scripts/benchmark.py --mode local` gọi đúng hàm này để bench đúng đường phục vụ.
     """
-    # [ĐÃ SỬA] Dùng AutoModelForImageTextToText (khớp lora_setup.py & evaluate.py),
-    # KHÔNG fix cứng Qwen3VL → chạy được trên transformers bản ổn định, không cần
-    # cài từ source.
+    # QUAY TRỞ LẠI DÙNG AutoModelForImageTextToText 
     from transformers import AutoModelForImageTextToText, BitsAndBytesConfig
 
     model_key = model_key or MODEL_KEY
@@ -210,23 +230,27 @@ def load_inference_model(
 
     adapters = discover_adapters(model_key, checkpoint_dir, adapter_dir)
     spec = resolve_spec(model_key, base_model, adapters)
+    
     base_source = base_model or spec.model_id
     STATE["spec"] = spec
 
-    # bfloat16 khớp lúc train (L4/A100). Đổi float16 nếu GPU không hỗ trợ bf16 (vd T4).
-    compute_dtype = torch.bfloat16
+    compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     bnb = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
         bnb_4bit_compute_dtype=compute_dtype,
+        llm_int8_enable_fp32_cpu_offload=True,
     )
 
     logger.info("Loading base %s [%s] ở 4-bit...", base_source, spec.key)
+    
+    # Nạp bằng AutoModelForImageTextToText để giữ lại toàn bộ đầu sinh ngôn ngữ (lm_head)
     model = AutoModelForImageTextToText.from_pretrained(
         base_source,
         quantization_config=bnb,
         device_map="auto",
+        offload_folder="offload_cache",
         torch_dtype=compute_dtype,
         trust_remote_code=True,
     )
@@ -237,39 +261,27 @@ def load_inference_model(
         from peft import PeftModel
 
         for index, (side, path) in enumerate(sorted(adapters.items(), key=lambda kv: kv[0].value)):
-            name = side.value  # tên adapter = 'truoc' / 'sau'
+            name = side.value
             if index == 0:
-                # Adapter đầu tiên bọc base thành PeftModel; các adapter sau gắn thêm
-                # vào CHÍNH model đó → base 4-bit chỉ tồn tại một bản trong VRAM.
                 model = PeftModel.from_pretrained(model, str(path), adapter_name=name)
             else:
                 model.load_adapter(str(path), adapter_name=name)
             loaded[side] = name
             logger.info("Gắn adapter mặt %s ← %s", side.value, path)
-            processor_src = str(path)  # processor đã lưu kèm adapter
+            processor_src = str(path)
         missing = [s.value for s in SIDE_DIR_TOKEN if s not in loaded]
         if missing:
-            logger.warning(
-                "Chưa có adapter cho mặt: %s → request cho mặt đó sẽ bị từ chối. "
-                "Train ở notebook 02 với SIDE tương ứng để bổ sung.", ", ".join(missing),
-            )
+            logger.warning("Chưa có adapter cho mặt: %s", ", ".join(missing))
     else:
-        logger.warning(
-            "Không tìm thấy adapter nào (MODEL_KEY=%s, CHECKPOINT_DIR=%s) → chạy base "
-            "thuần (zero-shot)", model_key, checkpoint_dir,
-        )
+        logger.warning("Không tìm thấy adapter nào → chạy base thuần (zero-shot)")
 
     STATE["adapters"] = loaded
     STATE["active"] = None
 
-    # Qua registry để áp đúng kwarg khống chế token ảnh của họ model này.
     processor = load_processor(processor_src, spec)
     set_left_padding(processor)
     model.eval()
-    logger.info(
-        "✓ Model %s sẵn sàng phục vụ (adapter: %s)",
-        spec.key, ", ".join(sorted(loaded)) or "không có",
-    )
+    logger.info("✓ Model %s sẵn sàng phục vụ", spec.key)
     return model, processor
 
 
@@ -382,22 +394,6 @@ def run_inference_batch(
 ) -> List[str]:
     """
     Chạy N ảnh theo lô, trả list chuỗi text thô (chưa parse), đúng thứ tự đầu vào.
-
-    Ảnh được **gom theo mặt thẻ** trước khi chạy: mỗi mặt dùng một adapter khác
-    nhau nên không thể trộn chung một lần `generate`. Lô trộn 2 mặt vì thế tốn ít
-    nhất 2 lần generate — đây là chi phí thật của việc phục vụ cả 2 mặt bằng một
-    model, và benchmark cần thấy nó.
-
-    Lô lớn hơn `max_batch` được cắt tiếp thành nhiều chunk để không OOM.
-
-    Args:
-        images: list ảnh PIL RGB (bị resize in-place).
-        sides: mặt thẻ tương ứng từng ảnh, cùng độ dài với `images`; phải là mặt
-            đã qua `serving_side()` (tức chắc chắn có adapter).
-        max_batch: số ảnh tối đa mỗi lần generate; None = `MAX_BATCH_SIZE` (env).
-
-    Returns:
-        List output thô, cùng thứ tự với `images`.
     """
     if len(images) != len(sides):
         raise ValueError(f"len(images)={len(images)} != len(sides)={len(sides)}")
@@ -418,10 +414,6 @@ def run_inference_batch(
             slots = indices[start : start + chunk_size]
             chunk_images = [images[i] for i in slots]
 
-            # Khớp tiền xử lý lúc train qua ĐÚNG hàm dùng chung của registry (thu
-            # nhỏ 1024px) → tránh lệch số token ảnh giữa train/serving và tránh OOM
-            # với ảnh upload độ phân giải cao. Sửa resize ở đây mà không sửa train
-            # là hỏng model.
             for image in chunk_images:
                 preprocess_image(image, spec)
 
@@ -439,14 +431,40 @@ def run_inference_batch(
             )
             inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-            # Greedy tường minh, lấy từ registry — cùng một nguồn với evaluate.py.
-            # Mỗi model có mặc định sampling riêng trong generation_config.json; để
-            # mặc định là output không tái lập được và lệch so với lúc đo metric.
             with GPU_LOCK:
                 select_adapter(side)
-                output_ids = model.generate(**inputs, **gen_kwargs)
-            # Nhờ left padding, mọi dòng trong lô có prompt dài bằng nhau → cắt
-            # chung được bằng shape[1].
+
+                gen_func = None
+                
+                # 1. Model thuần có sẵn generate (Qwen, Llama...)
+                if hasattr(model, "generate"):
+                    gen_func = model.generate
+                    
+                # 2. InternVL thuần (chưa bọc LoRA)
+                elif hasattr(model, "language_model") and hasattr(model.language_model, "generate"):
+                    gen_func = model.language_model.generate
+                    
+                # 3. Model đã bị bọc qua PeftModel (LoRA)
+                elif hasattr(model, "base_model"):
+                    base = model.base_model
+                    # Base model chuẩn
+                    if hasattr(base, "generate"):
+                        gen_func = base.generate
+                    # Base model là InternVL (phiên bản cấu trúc cũ)
+                    elif hasattr(base, "language_model") and hasattr(base.language_model, "generate"):
+                        gen_func = base.language_model.generate
+                    # Base model là InternVL (phiên bản cấu trúc mới bị lồng thêm 1 lớp .model)
+                    elif hasattr(base, "model") and hasattr(base.model, "language_model") and hasattr(base.model.language_model, "generate"):
+                        gen_func = base.model.language_model.generate
+
+                if gen_func is None:
+                    raise AttributeError(
+                        f"Không tìm thấy phương thức generate trên model kiểu {type(model)}. "
+                        "Cấu trúc phân cấp không khớp với bất kỳ pattern nào đã biết."
+                    )
+
+                output_ids = gen_func(**inputs, **gen_kwargs)
+
             generated = output_ids[:, inputs["input_ids"].shape[1] :]
             decoded = processor.batch_decode(generated, skip_special_tokens=True)
             for slot, text in zip(slots, decoded):

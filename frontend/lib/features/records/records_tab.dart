@@ -21,7 +21,9 @@ class _RecordsTabState extends State<RecordsTab> {
   @override
   void initState() {
     super.initState();
-    sessionStore.loadRecords();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      sessionStore.loadRecords();
+    });
   }
 
   @override
@@ -75,30 +77,6 @@ class _RecordsTabState extends State<RecordsTab> {
                       ],
                     ),
                   ),
-                  if (sessionStore.masked) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: AppColors.star.withValues(alpha: .16),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                            color: AppColors.star.withValues(alpha: .35)),
-                      ),
-                      child: const Row(children: [
-                        Icon(Icons.visibility_off_outlined,
-                            size: 15, color: AppColors.star),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                              'Bạn xem bản che: số CCCD đã ẩn một phần.',
-                              style: TextStyle(
-                                  fontSize: 11.5, color: AppColors.star)),
-                        ),
-                      ]),
-                    ),
-                  ],
                 ],
               ),
             ),

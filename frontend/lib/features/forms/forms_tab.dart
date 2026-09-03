@@ -6,9 +6,6 @@ import '../../data/session/session_store.dart';
 import '../scan/onboarding_screen.dart';
 
 /// Tab 1 — Danh mục biểu mẫu.
-///
-/// P2: danh mục lấy từ `GET /api/v1/forms` (chế độ thật) hoặc `kFormTypes`
-/// (mock). Bọc `AnimatedBuilder` để lời chào + danh mục đổi theo phiên/tải xong.
 class FormsTab extends StatefulWidget {
   const FormsTab({super.key});
 
@@ -164,11 +161,9 @@ class _FormCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(AppRadius.card),
-          border: Border(
-            top: const BorderSide(color: AppColors.lineSoft),
-            right: const BorderSide(color: AppColors.lineSoft),
-            bottom: const BorderSide(color: AppColors.lineSoft),
-            left: BorderSide(color: form.color, width: 4),
+          border: Border.all(
+            color: AppColors.lineSoft,
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(

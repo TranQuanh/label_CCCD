@@ -1,23 +1,25 @@
 """
 records.py
 ==========
-Router hồ sơ trích xuất (`/scan-records`) — P2: lịch sử từ PostgreSQL + duyệt.
+Router hồ sơ trích xuất (`/scan-records`) — P2: lịch sử từ PostgreSQL.
 
 Đây là nguồn chân lý lịch sử hồ sơ (quyết định #3: server là nguồn chân lý, thiết
 bị chỉ cache/mock). Nó thay chỗ lưu RAM trong `sessionStore` phía frontend.
 
 Quyền hạn (RBAC):
-  - POST /scan-records       — operator+ (viewer không gửi hồ sơ).
+  - POST /scan-records       — operator+ (viewer cũng được gửi hồ sơ).
   - GET  /scan-records       — operator/admin: hồ sơ của chính mình; admin có thể
                                truyền `?user_id=` để xem của người khác. viewer:
-                               chỉ record ĐÃ DUYỆT qua `v_scan_record_masked` (số
-                               CCCD bị che) — chốt mâu thuẫn Viewer vs RLS.
-  - GET  /scan-records/review-queue — operator+: danh sách chờ duyệt (pending).
-  - PATCH /scan-records/{id}/review — operator+: duyệt record → 'reviewed'.
-  - GET  /scan-records/{id}  — chủ sở hữu / admin (viewer: qua view đã duyệt).
+                               hồ sơ của chính mình.
+  - GET  /scan-records/{id}  — chủ sở hữu / admin.
 
 Mã hồ sơ (`code`) do SERVER cấp (quyết định thiết kế) — client không tự sinh nữa.
 Dạng: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
+
+THAY ĐỔI QUAN TRỌNG (theo yêu cầu user):
+- Bỏ requirement admin review: record tự động có `review_status='reviewed'`
+- Viewer có thể submit record
+- Xoá chức năng review queue
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .audit import audit
-from .deps import get_current_user, require_role
+from .deps import get_current_user
 from .forms import resolve_form_uuid
 
 logger = logging.getLogger(__name__)
@@ -81,13 +83,12 @@ class SubmitRecordBody(BaseModel):
     is_edited: bool = False
 
 
-class ReviewBody(BaseModel):
-    review_status: str = Field(default="reviewed", max_length=20)
+# Xoá ReviewBody vì không cần chức năng review
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
-def _serialize(row: dict, masked: bool = False) -> dict:
-    """1 dòng DB → JSON API. `masked=True` (viewer) → cột đã che sẵn."""
+def _serialize(row: dict) -> dict:
+    """1 dòng DB → JSON API."""
     return {
         "id": row["id"],
         "code": row.get("code"),
@@ -103,31 +104,27 @@ def _serialize(row: dict, masked: bool = False) -> dict:
     }
 
 
-def _record_join(masked: bool) -> str:
-    """SELECT ... FROM nguồn dữ liệu (bảng gốc hoặc view che cho viewer)."""
-    source = "v_scan_record_masked" if masked else "tblScanRecord"
+def _record_join() -> str:
+    """SELECT ... FROM bảng gốc (không dùng view mask nữa)."""
     return (
         f"SELECT r.id, r.code, r.review_status, r.extracted_data, r.supp, "
         f"r.card_side, r.parse_ok, r.is_edited, r.created_at, "
         f"f.slug AS form_slug, f.name AS form_name "
-        f"FROM {source} r LEFT JOIN tblFormType f ON f.id = r.form_type_id"
+        f"FROM tblScanRecord r LEFT JOIN tblFormType f ON f.id = r.form_type_id"
     )
 
 
-def _get_record_accessible(record_id: str, user: dict, masked: bool = False) -> dict:
+def _get_record_accessible(record_id: str, user: dict) -> dict:
     """
-    Lấy 1 record mà user được phép xem: owner/admin (hoặc viewer qua view đã
-    duyệt). 404 nếu không tồn tại HOẶC không có quyền (không lộ sự tồn tại).
+    Lấy 1 record mà user được phép xem: owner/admin.
+    404 nếu không tồn tại HOẶC không có quyền (không lộ sự tồn tại).
     """
     role = user["role"]
-    if masked:
-        query = f"{_record_join(masked=True)} WHERE r.id = %s"
-        params = (record_id,)
-    elif role == "admin":
-        query = f"{_record_join(masked=False)} WHERE r.id = %s"
+    if role == "admin":
+        query = f"{_record_join()} WHERE r.id = %s"
         params = (record_id,)
     else:
-        query = f"{_record_join(masked=False)} WHERE r.id = %s AND r.user_id = %s"
+        query = f"{_record_join()} WHERE r.id = %s AND r.user_id = %s"
         params = (record_id, user["id"])
     row = db.fetch_one(query, params)
     if row is None:
@@ -140,13 +137,14 @@ def _get_record_accessible(record_id: str, user: dict, masked: bool = False) -> 
 def submit_record(
     body: SubmitRecordBody,
     request: Request,
-    user: dict = Depends(require_role("operator")),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """
     Gửi một hồ sơ trích xuất lên server.
 
-    Server sinh mã hồ sơ, đặt `review_status='pending'` (chờ duyệt). Trường bổ
-    sung `supp` lưu riêng; `extracted_data` là JSONB tiếng Việt snake_case.
+    Server sinh mã hồ sơ, đặt `review_status='reviewed'` (đã duyệt tự động).
+    Trường bổ sung `supp` lưu riêng; `extracted_data` là JSONB tiếng Việt snake_case.
+    Tất cả user (kể cả viewer) đều có thể submit.
     """
     form_uuid = resolve_form_uuid(body.form_id.strip())
     if form_uuid is None:
@@ -164,7 +162,7 @@ def submit_record(
     record_id = db.fetch_one(
         "INSERT INTO tblScanRecord (code, user_id, form_type_id, review_status, "
         "extracted_data, supp, confidence_scores, parse_ok, raw_output, is_edited, card_side) "
-        "VALUES (%s, %s, %s, 'pending', %s, %s, NULL, %s, %s, %s, %s) RETURNING id",
+        "VALUES (%s, %s, %s, 'reviewed', %s, %s, NULL, %s, %s, %s, %s) RETURNING id",
         (code, user["id"], form_uuid, _jsonb(body.extracted_data),
          _jsonb(body.supp), body.parse_ok, body.raw_output, body.is_edited, body.card_side),
     )["id"]
@@ -185,26 +183,24 @@ def list_records(
     """
     Lịch sử hồ sơ từ PostgreSQL.
 
-    viewer: đọc qua `v_scan_record_masked` (chỉ record đã duyệt, số CCCD che).
+    viewer: hồ sơ của chính mình.
     operator: hồ sơ của chính mình. admin: của mình, hoặc `?user_id=` của khác.
     """
     role = user["role"]
-    masked = role == "viewer"
 
     clauses: list[str] = []
     params: list[Any] = []
-    if masked:
-        query = f"{_record_join(masked=True)}"
-    elif role == "admin":
-        query = f"{_record_join(masked=False)}"
+    
+    if role == "admin":
+        query = f"{_record_join()}"
         if user_id:
             clauses.append("r.user_id = %s")
             params.append(user_id)
         else:
             clauses.append("r.user_id = %s")
             params.append(user["id"])
-    else:  # operator
-        query = f"{_record_join(masked=False)}"
+    else:  # operator hoặc viewer
+        query = f"{_record_join()}"
         clauses.append("r.user_id = %s")
         params.append(user["id"])
 
@@ -214,79 +210,13 @@ def list_records(
 
     rows = db.fetch_all(query, [*params, limit, offset])
     return {
-        "records": [_serialize(r, masked=masked) for r in rows],
+        "records": [_serialize(r) for r in rows],
         "count": len(rows),
-        "masked": masked,
     }
 
 
-@router.get("/review-queue")
-def review_queue(
-    request: Request,
-    user: dict = Depends(require_role("operator")),
-    form_id: Optional[str] = Query(None),
-    card_side: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> dict:
-    """
-    Hàng đợi duyệt: các record `pending` (operator/admin). Filter theo biểu mẫu
-    hoặc mặt thẻ nếu cần.
-    """
-    clauses = ["r.review_status = 'pending'"]
-    params: list[Any] = []
-    if form_id:
-        clauses.append("f.slug = %s")
-        params.append(form_id)
-    if card_side:
-        if card_side not in VALID_SIDES:
-            raise HTTPException(status_code=400, detail=f"card_side phải là: {', '.join(VALID_SIDES)}")
-        clauses.append("r.card_side = %s")
-        params.append(card_side)
-
-    query = (
-        f"{_record_join(masked=False)} WHERE {' AND '.join(clauses)} "
-        f"ORDER BY r.created_at ASC LIMIT %s OFFSET %s"
-    )
-    rows = db.fetch_all(query, [*params, limit, offset])
-    return {"records": [_serialize(r) for r in rows], "count": len(rows)}
-
-
-@router.patch("/{record_id}/review")
-def review_record(
-    record_id: str,
-    body: ReviewBody,
-    request: Request,
-    user: dict = Depends(require_role("operator")),
-) -> dict:
-    """
-    Duyệt một record: `pending → reviewed`. Chỉ operator/admin. Sau khi duyệt,
-    record xuất hiện trong lịch sử của viewer (qua view che số CCCD).
-    """
-    if body.review_status not in ("reviewed", "pending"):
-        raise HTTPException(status_code=400, detail="review_status phải là 'reviewed' hoặc 'pending'")
-
-    row = db.fetch_one(
-        "SELECT id, code, review_status, user_id FROM tblScanRecord WHERE id = %s",
-        (record_id,),
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
-
-    if body.review_status == row["review_status"]:
-        return {"message": "Hồ sơ đã ở trạng thái này", "record_id": record_id,
-                "review_status": row["review_status"]}
-
-    db.execute(
-        "UPDATE tblScanRecord SET review_status = %s, updated_at = NOW() WHERE id = %s",
-        (body.review_status, record_id),
-    )
-    ip = request.client.host if request.client else None
-    device = request.headers.get("user-agent")
-    audit(user["id"], "record.review", "record", record_id,
-          {"code": row["code"], "to": body.review_status}, ip, device)
-    return {"message": "Đã cập nhật trạng thái duyệt", "record_id": record_id,
-            "review_status": body.review_status}
+# Xoá endpoint review-queue vì không cần chức năng review
+# Xoá endpoint review vì không cần admin duyệt
 
 
 @router.get("/{record_id}")
@@ -295,7 +225,6 @@ def get_record(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Chi tiết một hồ sơ (chủ sở hữu / admin; viewer chỉ xem được bản đã duyệt)."""
-    masked = user["role"] == "viewer"
-    row = _get_record_accessible(record_id, user, masked=masked)
-    return _serialize(row, masked=masked)
+    """Chi tiết một hồ sơ (chủ sở hữu / admin)."""
+    row = _get_record_accessible(record_id, user)
+    return _serialize(row)
