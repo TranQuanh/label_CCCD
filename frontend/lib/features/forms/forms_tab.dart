@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/form_type.dart';
 import '../../data/session/session_store.dart';
-import '../scan/onboarding_screen.dart';
+import 'form_preview_screen.dart';
 
 /// Tab 1 — Danh mục biểu mẫu.
 class FormsTab extends StatefulWidget {
@@ -154,7 +154,7 @@ class _FormCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.card),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
-            builder: (_) => OnboardingScreen(formType: form)),
+            builder: (_) => FormPreviewScreen(formType: form)),
       ),
       child: Container(
         padding: const EdgeInsets.all(15),

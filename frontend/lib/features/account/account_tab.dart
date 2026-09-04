@@ -8,12 +8,12 @@ import '../auth/change_password_screen.dart';
 
 /// Tab 3 — Tài khoản: thông tin người dùng + đăng xuất.
 ///
-/// P1: thông tin lấy từ server qua `/api/v1/auth/me` ([AuthUser]) — không còn
-/// `dob` (bảng `tblUser` không có cột này). Thẻ CCCD vẫn hiển thị ở khối riêng
-/// có nhãn "Từ hồ sơ gần nhất" để không bị hiểu nhầm là danh tính đã xác thực.
+// P1: thông tin lấy từ server qua `/api/v1/auth/me` ([AuthUser]) — không còn
+// `dob` (bảng `tblUser` không có cột này). Thẻ CCCD vẫn hiển thị ở khối riêng
+// có nhãn "Từ hồ sơ gần nhất" để không bị hiểu nhầm là danh tính đã xác thực.
 ///
-/// Với vai trò `admin` hiện thêm mục "Quản trị hệ thống" (quản lý người dùng +
-/// nhật ký kiểm toán).
+// Với vai trò `admin` hiện thêm mục "Quản trị hệ thống" (quản lý người dùng +
+// nhật ký kiểm toán).
 class AccountTab extends StatelessWidget {
   const AccountTab({super.key});
 
@@ -31,15 +31,6 @@ class AccountTab extends StatelessWidget {
           ['Số hồ sơ đã tạo', sessionStore.records.length.toString()],
         ];
 
-        final card = sessionStore.latestCard;
-        final cardRows = card == null
-            ? const <List<String>>[]
-            : <List<String>>[
-                ['Họ và tên', card.fullName],
-                ['Số CCCD', card.idNumber],
-                ['Ngày sinh', card.dob],
-              ];
-
         return Column(
           children: [
             _header(context, name),
@@ -49,19 +40,6 @@ class AccountTab extends StatelessWidget {
                 children: [
                   _groupLabel('THÔNG TIN TÀI KHOẢN'),
                   _rowCard(accountRows),
-                  if (cardRows.isNotEmpty) ...[
-                    const SizedBox(height: 18),
-                    _groupLabel('THÔNG TIN THẺ — TỪ HỒ SƠ GẦN NHẤT'),
-                    _rowCard(cardRows),
-                    const SizedBox(height: 6),
-                    const Text(
-                        'Dữ liệu này lấy từ hồ sơ bạn kê khai gần đây nhất, '
-                        'chưa được cơ quan chức năng xác thực.',
-                        style: TextStyle(
-                            fontSize: 11.5,
-                            color: AppColors.hint,
-                            height: 1.4)),
-                  ],
                   const SizedBox(height: 18),
                   _groupLabel('BẢO MẬT'),
                   Container(

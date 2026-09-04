@@ -74,7 +74,7 @@ class _CameraScreenState extends State<CameraScreen> {
 
       // Use a resolution that's more compatible with emulators
       final ctrl =
-          CameraController(selectedCamera, ResolutionPreset.medium, enableAudio: false);
+          CameraController(selectedCamera, ResolutionPreset.high, enableAudio: false);
 
       // Initialize with timeout to prevent hanging
       await ctrl.initialize().timeout(
