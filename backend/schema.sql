@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tblFormType (
     requires_front  BOOLEAN NOT NULL DEFAULT TRUE,
     requires_back   BOOLEAN NOT NULL DEFAULT FALSE,
     required_fields JSONB,           -- [{key,label,hint}, ...] — P2: JSONB thay TEXT[]
+    layout          JSONB,           -- layout specification for supplemental fields
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -74,6 +75,17 @@ BEGIN
     ) THEN
         ALTER TABLE tblFormType
             ALTER COLUMN required_fields TYPE JSONB USING to_jsonb(required_fields);
+    END IF;
+END $$;
+
+-- Add layout column if not exists (for existing databases)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE lower(table_name) = 'tblformtype' AND column_name = 'layout'
+    ) THEN
+        ALTER TABLE tblFormType ADD COLUMN layout JSONB;
     END IF;
 END $$;
 
@@ -149,45 +161,46 @@ CREATE TABLE IF NOT EXISTS tblAuditLog (
     metadata     JSONB,
     ip_address   VARCHAR(45),
     device_info  VARCHAR(255),
-    created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_user ON tblAuditLog(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON tblAuditLog(created_at DESC);
 
 -- ───────────────────────────────────────────────────────────────────────────
--- View che thông tin nhạy cảm — dùng cho người dùng/viewer xem kết quả đã
--- duyệt. Số CCCD bị che giữa: 001201******.
--- P2 bổ sung cột `code`/`supp` — PostgreSQL không cho CREATE OR REPLACE đổi
--- thứ tự cột nên phải DROP trước rồi tạo lại.
--- ───────────────────────────────────────────────────────────────────────────
--- Xoá view mask vì không cần che số CCCD (user xem kết quả của chính mình)
--- DROP VIEW IF EXISTS v_scan_record_masked;
-
--- ───────────────────────────────────────────────────────────────────────────
 -- Seed: 3 loại biểu mẫu (khớp kFormTypes phía frontend)
 -- DO UPDATE để DB cũ (đã seed bản TEXT[]) được làm mới sang JSONB có label/hint.
 -- ───────────────────────────────────────────────────────────────────────────
-INSERT INTO tblFormType (slug, name, description, requires_front, requires_back, required_fields)
+INSERT INTO tblFormType (slug, name, description, requires_front, requires_back, required_fields, layout)
 VALUES
     ('atm_open', 'Đăng ký mở thẻ ATM', 'Kê khai thông tin cá nhân khi mở tài khoản thanh toán.', TRUE, TRUE,
      JSONB_BUILD_ARRAY(
          JSONB_BUILD_OBJECT('key', 'phone', 'label', 'Số điện thoại liên hệ', 'hint', 'Nhập số điện thoại đang sử dụng'),
          JSONB_BUILD_OBJECT('key', 'occupation', 'label', 'Nghề nghiệp hiện tại', 'hint', 'Ví dụ: Nhân viên văn phòng')
-     )),
+     ),
+     NULL),
     ('health_declare', 'Khai báo y tế', 'Tờ khai sức khỏe phục vụ khám chữa bệnh.', TRUE, TRUE,
      JSONB_BUILD_ARRAY(
          JSONB_BUILD_OBJECT('key', 'phone', 'label', 'Số điện thoại liên hệ', 'hint', 'Nhập số điện thoại đang sử dụng'),
          JSONB_BUILD_OBJECT('key', 'symptoms', 'label', 'Triệu chứng (nếu có)', 'hint', 'Nhập triệu chứng hoặc ghi "Không"')
-     )),
+     ),
+     NULL),
     ('service_contract', 'Hợp đồng dịch vụ', 'Đăng ký ký hợp đồng cung cấp dịch vụ.', TRUE, TRUE,
      JSONB_BUILD_ARRAY(
          JSONB_BUILD_OBJECT('key', 'phone', 'label', 'Số điện thoại liên hệ', 'hint', 'Nhập số điện thoại đang sử dụng'),
          JSONB_BUILD_OBJECT('key', 'company', 'label', 'Công ty / đơn vị', 'hint', 'Nhập tên công ty nếu ký thay tổ chức')
-     ))
+     ),
+     NULL)
 ON CONFLICT (slug) DO UPDATE SET
     name = EXCLUDED.name,
     description = EXCLUDED.description,
     requires_front = EXCLUDED.requires_front,
     requires_back = EXCLUDED.requires_back,
-    required_fields = EXCLUDED.required_fields;
+    required_fields = EXCLUDED.required_fields,
+    layout = EXCLUDED.layout;
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Xoá view mask vì không cần che số CCCD (user xem kết quả của chính mình)
+-- DROP VIEW IF EXISTS v_scan_record_masked;
+--
+-- ───────────────────────────────────────────────────────────────────────────

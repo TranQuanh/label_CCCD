@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,7 +8,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/scanner_overlay.dart';
 import '../../data/models/form_type.dart';
 import 'processing_screen.dart';
-import 'dart:async';
 
 /// Màn hình 4 — Camera & Quét: chụp mặt trước rồi mặt sau.
 ///
@@ -43,7 +44,7 @@ class _CameraScreenState extends State<CameraScreen> {
       if (cameras.isEmpty) {
         if (mounted) {
           setState(() => _error = 'Không tìm thấy camera, tự động chuyển sang thư viện ảnh.');
-          _pickFromGallery();
+          unawaited(_pickFromGallery());
         }
         return;
       }
@@ -67,7 +68,7 @@ class _CameraScreenState extends State<CameraScreen> {
       if (selectedCamera == null) {
         if (mounted) {
           setState(() => _error = 'Không thể truy cập camera.');
-          _pickFromGallery();
+          unawaited(_pickFromGallery());
         }
         return;
       }
@@ -95,15 +96,15 @@ class _CameraScreenState extends State<CameraScreen> {
         _ready = true;
         _error = null; // Clear any previous error
       });
-    } on TimeoutException catch (e) {
+    } on TimeoutException catch (_) {
       if (mounted) {
         setState(() => _error = 'Khởi tạo camera hết thời gian. Vui lòng thử lại hoặc sử dụng thư viện ảnh.');
-        _pickFromGallery();
+        unawaited(_pickFromGallery());
       }
     } catch (e) {
       if (mounted) {
         setState(() => _error = 'Không mở được camera: $e\nTự động chuyển sang thư viện ảnh.');
-        _pickFromGallery();
+        unawaited(_pickFromGallery());
       }
     }
   }

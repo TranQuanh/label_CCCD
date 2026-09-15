@@ -83,7 +83,12 @@ class SubmitRecordBody(BaseModel):
     is_edited: bool = False
 
 
-# Xoá ReviewBody vì không cần chức năng review
+class UpdateRecordBody(BaseModel):
+    """Body cho PATCH /scan-records/{id} — cập nhật thông tin đã trích xuất."""
+    extracted_data: dict[str, Any] = Field(default_factory=dict)
+    supp: dict[str, str] = Field(default_factory=dict)
+    parse_ok: bool = True
+    is_edited: bool = True  # mặc định True vì user đang sửa tay
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -217,6 +222,44 @@ def list_records(
 
 # Xoá endpoint review-queue vì không cần chức năng review
 # Xoá endpoint review vì không cần admin duyệt
+
+
+@router.patch("/{record_id}")
+def update_record(
+    record_id: str,
+    body: UpdateRecordBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Cập nhật thông tin một hồ sơ đã gửi (chủ sở hữu / admin).
+
+    Chỉ cho phép sửa `extracted_data`, `supp`, `parse_ok`, `is_edited`.
+    Không thay đổi `code`, `form_type_id`, `review_status`, `created_at`.
+    `is_edited` tự động đặt True để đánh dấu đã qua tay người dùng.
+    """
+    # Kiểm tra record tồn tại và user có quyền
+    _get_record_accessible(record_id, user)
+
+    if not body.extracted_data:
+        raise HTTPException(status_code=400, detail="extracted_data không được rỗng")
+
+    ip = request.client.host if request.client else None
+    device = request.headers.get("user-agent")
+
+    db.execute(
+        "UPDATE tblScanRecord SET extracted_data = %s, supp = %s, "
+        "parse_ok = %s, is_edited = %s, updated_at = NOW() WHERE id = %s",
+        (_jsonb(body.extracted_data), _jsonb(body.supp),
+         body.parse_ok, body.is_edited, record_id),
+    )
+
+    audit(user["id"], "record.update", "record", record_id,
+          {"is_edited": body.is_edited}, ip, device)
+
+    # Trả về record sau khi cập nhật
+    row = _get_record_accessible(record_id, user)
+    return _serialize(row)
 
 
 @router.get("/{record_id}")

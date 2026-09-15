@@ -7,11 +7,11 @@ import '../../core/widgets/section_label.dart';
 import '../../data/models/form_type.dart';
 import '../../data/models/id_card.dart';
 import '../../data/models/submitted_record.dart';
+import '../../data/session/session_store.dart';
 import '../../data/validation/card_rules.dart';
 import '../forms/templates/form_template_registry.dart';
-import '../output/preview_screen.dart';
 
-/// Định nghĩa một trường trên thẻ.
+/// Định nghĩa một trường thẻ CCCD dùng trong màn hình sửa.
 class _Def {
   final String key;
   final String label;
@@ -21,7 +21,7 @@ class _Def {
   const _Def(this.key, this.label, {this.multiline = false, this.mono = false});
 }
 
-/// Thanh tiến trình có animation.
+/// Thanh tiến trình hợp lệ (tái sử dụng từ ReviewScreen).
 class _ValidityBar extends StatelessWidget {
   final double value;
   final Color color;
@@ -45,28 +45,26 @@ class _ValidityBar extends StatelessWidget {
   }
 }
 
-/// Màn hình 5 — Đối chiếu dữ liệu AI + bổ sung thông tin còn thiếu.
-class ReviewScreen extends StatefulWidget {
+/// Màn hình sửa hồ sơ đã tạo.
+///
+/// Mở từ [PreviewScreen] khi người dùng bấm nút **Sửa** trên hồ sơ `readOnly`.
+/// Không có nút quay lại phần chụp ảnh.
+/// Kết quả: pop trả về [SubmittedRecord] mới nếu đã lưu, hoặc `null` nếu hủy.
+class EditRecordScreen extends StatefulWidget {
   final FormType formType;
-  final IdCardData card;
+  final SubmittedRecord record;
 
-  /// Trường bị đánh dấu ngay sau khi trích xuất (kết quả `CardRules` lần đầu).
-  final List<String> needsReview;
-  final List<FieldIssue> issues;
-
-  const ReviewScreen({
+  const EditRecordScreen({
     super.key,
     required this.formType,
-    required this.card,
-    this.needsReview = const [],
-    this.issues = const [],
+    required this.record,
   });
 
   @override
-  State<ReviewScreen> createState() => _ReviewScreenState();
+  State<EditRecordScreen> createState() => _EditRecordScreenState();
 }
 
-class _ReviewScreenState extends State<ReviewScreen> {
+class _EditRecordScreenState extends State<EditRecordScreen> {
   static const _frontDefs = <_Def>[
     _Def('fullName', 'Họ và tên'),
     _Def('idNumber', 'Số CCCD', mono: true),
@@ -86,26 +84,39 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
   static const _allDefs = <_Def>[..._frontDefs, ..._backDefs];
 
+  // Dữ liệu gốc bất biến — dùng để hoàn lại.
+  late final IdCardData _originalCard;
+  late final Map<String, String> _originalSupp;
+
   final Map<String, TextEditingController> _card = {};
   final Map<String, TextEditingController> _supp = {};
-  bool _touched = false;
 
-  /// Kết quả kiểm tra của giá trị đang hiển thị, tính lại mỗi lần gõ.
+  bool _touched = false;
+  bool _saving = false;
+
   Map<String, List<FieldIssue>> _issues = const {};
 
   @override
   void initState() {
     super.initState();
-    for (final e in widget.card.toMap().entries) {
+    // Lưu bản gốc bất biến.
+    _originalCard = widget.record.card.clone();
+    _originalSupp = Map.unmodifiable(Map<String, String>.from(widget.record.supp));
+
+    // Khởi tạo controllers thẻ CCCD từ dữ liệu record hiện tại.
+    for (final e in widget.record.card.toMap().entries) {
       final c = TextEditingController(text: e.value);
       c.addListener(_revalidate);
       _card[e.key] = c;
     }
+
+    // Khởi tạo controllers supp từ dữ liệu record hiện tại.
     for (final s in widget.formType.supp) {
-      final c = TextEditingController();
+      final c = TextEditingController(text: widget.record.supp[s.key] ?? '');
       c.addListener(_revalidate);
       _supp[s.key] = c;
     }
+
     _issues = CardRules.byField(_currentCard());
   }
 
@@ -121,7 +132,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   IdCardData _currentCard() {
-    final card = widget.card.clone();
+    final card = _originalCard.clone();
     card.applyMap({for (final e in _card.entries) e.key: e.value.text});
     return card;
   }
@@ -131,47 +142,75 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   List<FieldIssue> _issuesOf(String key) => _issues[key] ?? const [];
-
   bool _blocks(String key) => _issuesOf(key).any((i) => i.blocks);
-
   bool _warns(String key) => _issuesOf(key).isNotEmpty;
 
-  bool get _canContinue {
+  bool get _canSave {
     final cardOk = _allDefs.every((d) => !_blocks(d.key));
     final suppOk = _supp.values.every((c) => c.text.trim().isNotEmpty);
     return cardOk && suppOk;
   }
 
-  /// Tỉ lệ trường không còn vướng quy tắc nào.
   int get _validPercent {
     final ok = _allDefs.where((d) => !_warns(d.key)).length;
     return ((ok / _allDefs.length) * 100).round();
   }
 
-  void _continue() {
-    if (!_canContinue) {
+  /// Hoàn lại toàn bộ giá trị về dữ liệu gốc, ở lại trang sửa.
+  void _reset() {
+    setState(() {
+      _touched = false;
+      final origMap = _originalCard.toMap();
+      for (final e in _card.entries) {
+        e.value.text = origMap[e.key] ?? '';
+      }
+      for (final e in _supp.entries) {
+        e.value.text = _originalSupp[e.key] ?? '';
+      }
+      _issues = CardRules.byField(_currentCard());
+    });
+  }
+
+  /// Lưu hồ sơ — gọi updateRecord, pop trả về record mới.
+  Future<void> _save() async {
+    if (!_canSave) {
       setState(() => _touched = true);
       return;
     }
-    final card = _currentCard()
-      ..idNumber = Validators.normalizeIdNumber(_card['idNumber']!.text)
-      ..sex = Validators.normalizeSex(_card['sex']!.text);
+    if (_saving) return;
+    setState(() => _saving = true);
 
-    final supp = {
-      for (final e in _supp.entries) e.key: e.value.text.trim(),
-    };
+    try {
+      final card = _currentCard()
+        ..idNumber = Validators.normalizeIdNumber(_card['idNumber']!.text)
+        ..sex = Validators.normalizeSex(_card['sex']!.text);
 
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => PreviewScreen(
-        formType: widget.formType,
+      final supp = {
+        for (final e in _supp.entries) e.key: e.value.text.trim(),
+      };
+
+      final updated = await sessionStore.updateRecord(
+        original: widget.record,
         card: card,
         supp: supp,
-        code: SubmittedRecord.newCode(),
-      ),
-    ));
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop(updated);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không lưu được hồ sơ: $e')),
+      );
+    }
   }
 
-  /// Helper to get SuppField by key
+  /// Quay lại — không lưu gì.
+  void _back() => Navigator.of(context).pop(null);
+
+  // ── Helper SuppField ──────────────────────────────────────────────────────
+
   SuppField? _suppFieldByKey(String key) {
     try {
       return widget.formType.supp.firstWhere((sf) => sf.key == key);
@@ -180,7 +219,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
     }
   }
 
-  /// Build widgets for supplemental fields based on layout
   List<Widget> _buildSuppFields() {
     final layout = widget.formType.layout;
     if (layout.isEmpty) {
@@ -238,10 +276,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
     return children;
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    // Nếu form có template riêng → dùng template trong ListView, giữ nguyên
-    // header + validity bar + bottom bar của màn hình review.
     final hasTemplate = FormTemplateRegistry.hasTemplate(widget.formType.id);
 
     return Scaffold(
@@ -251,9 +289,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           _header(),
           _validityBar(),
           Expanded(
-            child: hasTemplate
-                ? _buildTemplateReview()
-                : _buildGenericReview(),
+            child: hasTemplate ? _buildTemplateEdit() : _buildGenericEdit(),
           ),
           _bottomBar(),
         ],
@@ -261,11 +297,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     );
   }
 
-  /// Render màn hình review cho form có template riêng.
-  /// CHỈ hiển thị các panel nhập liệu (supp + CCCD) — KHÔNG hiển thị preview form.
-  /// Template sẽ xuất hiện ở PreviewScreen (output mode) sau khi user xác nhận.
-  Widget _buildTemplateReview() {
-    // Gom tất cả controllers thành một Listenable hợp nhất.
+  Widget _buildTemplateEdit() {
     final allListenables = Listenable.merge([
       ..._card.values,
       ..._supp.values,
@@ -277,7 +309,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Panel nhập tay supp fields
             if (widget.formType.supp.isNotEmpty) ...[
               Container(
                 padding: const EdgeInsets.all(16),
@@ -290,12 +321,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SectionLabel(
-                        text: 'ĐIỀN THÔNG TIN BỔ SUNG',
+                        text: 'THÔNG TIN BỔ SUNG',
                         barColor: AppColors.flagRed,
                         textColor: Color(0xFFB01B15)),
                     const SizedBox(height: 6),
                     const Text(
-                        'Nhập các thông tin dưới đây.',
+                        'Kiểm tra và chỉnh sửa thông tin bổ sung.',
                         style: TextStyle(fontSize: 12, color: AppColors.muted)),
                     const SizedBox(height: 11),
                     ..._buildSuppFields(),
@@ -304,7 +335,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
               ),
               const SizedBox(height: 16),
             ],
-            // Panel chỉnh sửa thông tin CCCD
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -316,12 +346,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SectionLabel(
-                      text: 'KIỂM TRA THÔNG TIN CCCD',
+                      text: 'THÔNG TIN CCCD',
                       barColor: AppColors.cobalt,
                       textColor: AppColors.navy),
                   const SizedBox(height: 6),
                   const Text(
-                      'Sửa nếu AI trích xuất sai.',
+                      'Sửa nếu cần điều chỉnh.',
                       style: TextStyle(fontSize: 12, color: AppColors.muted)),
                   const SizedBox(height: 11),
                   ..._frontDefs.map(_cardField),
@@ -332,12 +362,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
             const SizedBox(height: 16),
           ],
         );
-      }, // builder
-    ); // ListenableBuilder
+      },
+    );
   }
 
-  /// Render generic (fallback) cho form chưa có template riêng.
-  Widget _buildGenericReview() {
+  Widget _buildGenericEdit() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
       children: [
@@ -356,12 +385,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
         ..._backDefs.map(_cardField),
         const SizedBox(height: 5),
         const SectionLabel(
-            text: 'THÔNG TIN CẦN BỔ SUNG',
+            text: 'THÔNG TIN BỔ SUNG',
             barColor: AppColors.flagRed,
             textColor: Color(0xFFB01B15)),
         const SizedBox(height: 6),
         const Text(
-            'Các trường không có trên thẻ — vui lòng nhập tay.',
+            'Kiểm tra và chỉnh sửa nếu cần.',
             style: TextStyle(fontSize: 12, color: AppColors.muted)),
         const SizedBox(height: 11),
         ..._buildSuppFields(),
@@ -369,55 +398,68 @@ class _ReviewScreenState extends State<ReviewScreen> {
     );
   }
 
+  // ── Header ────────────────────────────────────────────────────────────────
+
   Widget _header() {
     return Container(
       width: double.infinity,
       color: AppColors.navy,
       padding: EdgeInsets.fromLTRB(
           20, MediaQuery.of(context).padding.top + 12, 20, 16),
-      child: Row(children: [
-        Row(children: [
-          _thumb('TRƯỚC', const Color(0xFF334063)),
-          const SizedBox(width: 6),
-          _thumb('SAU', const Color(0xFF3A3550)),
-        ]),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Đối chiếu & bổ sung',
-                  style: TextStyle(
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white)),
-              const SizedBox(height: 2),
-              Text(widget.formType.title,
-                  style:
-                      const TextStyle(fontSize: 12, color: AppColors.onNavy)),
-            ],
+      child: Row(
+        children: [
+          InkWell(
+            onTap: _back,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
+            ),
           ),
-        ),
-      ]),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Sửa hồ sơ',
+                    style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white)),
+                const SizedBox(height: 2),
+                Text(widget.formType.title,
+                    style:
+                        const TextStyle(fontSize: 12, color: AppColors.onNavy)),
+              ],
+            ),
+          ),
+          // Mã hồ sơ hiển thị góc phải
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .10),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              widget.record.code,
+              style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.onNavy,
+                  fontFamily: 'monospace'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _thumb(String label, Color bg) => Container(
-        width: 62,
-        height: 40,
-        alignment: Alignment.bottomLeft,
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: AppColors.star.withValues(alpha: .55), width: 1.5),
-        ),
-        child: Text(label,
-            style: const TextStyle(
-                fontSize: 8,
-                fontWeight: FontWeight.w700,
-                color: AppColors.star)),
-      );
+  // ── Validity bar ──────────────────────────────────────────────────────────
 
   Widget _validityBar() {
     final pct = _validPercent;
@@ -447,6 +489,101 @@ class _ReviewScreenState extends State<ReviewScreen> {
       ]),
     );
   }
+
+  // ── Bottom bar ────────────────────────────────────────────────────────────
+
+  Widget _bottomBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppColors.lineSoft)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          16, 11, 16, MediaQuery.of(context).padding.bottom + 14),
+      child: Column(children: [
+        if (_touched && !_canSave)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 9),
+            child: Text(
+                '⚠ Còn trường chưa hợp lệ hoặc chưa nhập — vui lòng kiểm tra lại',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.flagRed)),
+          ),
+        Row(children: [
+          // Nút Hoàn lại
+          SizedBox(
+            height: 54,
+            child: OutlinedButton.icon(
+              onPressed: _reset,
+              icon: const Icon(Icons.history, size: 18),
+              label: const Text('Hoàn lại',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.inkSoft,
+                side: const BorderSide(color: AppColors.line, width: 1.5),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.button)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Nút Quay lại
+          SizedBox(
+            height: 54,
+            child: OutlinedButton(
+              onPressed: _back,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.navy,
+                side: const BorderSide(color: AppColors.line, width: 1.5),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.button)),
+              ),
+              child: const Text('Quay lại',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Nút Lưu (chiếm phần còn lại)
+          Expanded(
+            child: SizedBox(
+              height: 54,
+              child: ElevatedButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.save_outlined, size: 20),
+                label: Text(
+                  _saving ? 'Đang lưu...' : 'Lưu',
+                  style: const TextStyle(
+                      fontSize: 15.5, fontWeight: FontWeight.w800),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _canSave ? AppColors.flagRed : AppColors.flagRedSoft,
+                  disabledBackgroundColor: AppColors.flagRedSoft,
+                  foregroundColor: Colors.white,
+                  disabledForegroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.button)),
+                ),
+              ),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Field widgets ─────────────────────────────────────────────────────────
 
   Widget _cardField(_Def d) {
     final issues = _issuesOf(d.key);
@@ -486,66 +623,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
             filled ? '✓ Đã nhập' : (errored ? '⚠ Bắt buộc' : 'Cần nhập'),
         helper: errored ? 'Trường bắt buộc — vui lòng nhập.' : null,
       ),
-    );
-  }
-
-  Widget _bottomBar() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppColors.lineSoft)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          20, 11, 20, MediaQuery.of(context).padding.bottom + 14),
-      child: Column(children: [
-        if (_touched && !_canContinue)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 9),
-            child: Text(
-                '⚠ Còn trường chưa hợp lệ hoặc chưa nhập — vui lòng kiểm tra lại',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.flagRed)),
-          ),
-        Row(children: [
-          SizedBox(
-            width: 56,
-            height: 54,
-            child: OutlinedButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.zero,
-                side: const BorderSide(color: AppColors.line, width: 1.5),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadius.button)),
-              ),
-              child: const Icon(Icons.camera_alt_outlined,
-                  color: AppColors.navy, size: 20),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: SizedBox(
-              height: 54,
-              child: ElevatedButton(
-                onPressed: _continue,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      _canContinue ? AppColors.flagRed : AppColors.flagRedSoft,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.button)),
-                ),
-                child: const Text('Xem biểu mẫu hoàn chỉnh',
-                    style: TextStyle(
-                        fontSize: 16.5, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ),
-        ]),
-      ]),
     );
   }
 }

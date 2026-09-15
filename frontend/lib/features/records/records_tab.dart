@@ -171,6 +171,7 @@ class _RecordCard extends StatelessWidget {
           supp: record.supp,
           code: record.code,
           readOnly: true,
+          record: record,
         ),
       )),
       child: Container(

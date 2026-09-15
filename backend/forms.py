@@ -11,13 +11,15 @@ biết hai định danh, tránh lộn xộn.
 P2: `required_fields` là JSONB `[{key,label,hint}, ...]` — /forms là nguồn duy
 nhất cung cấp metadata trường bổ sung; frontend render động theo nó (kFormTypes
 chỉ còn dành cho chế độ mock).
+
+P2b: `layout` là JSONB mô tả cấu trúc hiển thị trường bổ sung (sections, fields, v.v.).
 """
 
 from __future__ import annotations
 
 import logging
 import uuid as uuid_mod
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -52,6 +54,7 @@ class FormBody(BaseModel):
     requires_front: bool = True
     requires_back: bool = False
     required_fields: list[SuppFieldDef] = []
+    layout: list[dict[str, Any]] = Field(default_factory=list)
     is_active: bool = True
 
 
@@ -61,6 +64,7 @@ class UpdateFormBody(BaseModel):
     requires_front: Optional[bool] = None
     requires_back: Optional[bool] = None
     required_fields: Optional[list[SuppFieldDef]] = None
+    layout: Optional[list[dict[str, Any]]] = None
     is_active: Optional[bool] = None
 
 
@@ -74,6 +78,7 @@ def _serialize(row: dict) -> dict:
         "requires_front": row["requires_front"],
         "requires_back": row["requires_back"],
         "required_fields": row["required_fields"] or [],
+        "layout": row["layout"] or [],
         "is_active": row["is_active"],
     }
 
@@ -83,7 +88,7 @@ def list_forms() -> dict:
     """Danh sách biểu mẫu đang kích hoạt (định danh trả về là slug)."""
     rows = db.fetch_all(
         "SELECT id, slug, name, description, requires_front, requires_back, "
-        "required_fields, is_active FROM tblFormType WHERE is_active = TRUE "
+        "required_fields, layout, is_active FROM tblFormType WHERE is_active = TRUE "
         "ORDER BY name"
     )
     return {"forms": [_serialize(r) for r in rows]}
@@ -93,7 +98,7 @@ def get_form_or_404(slug: str) -> dict:
     """Lấy biểu mẫu theo slug; 404 nếu thiếu — dùng cho endpoint cần form."""
     row = db.fetch_one(
         "SELECT id, slug, name, description, requires_front, requires_back, "
-        "required_fields, is_active FROM tblFormType WHERE slug = %s AND is_active = TRUE",
+        "required_fields, layout, is_active FROM tblFormType WHERE slug = %s AND is_active = TRUE",
         (slug,),
     )
     if row is None:
@@ -110,10 +115,18 @@ def create_form(body: FormBody) -> dict:
     fields = [f.model_dump() for f in body.required_fields]
     db.execute(
         "INSERT INTO tblFormType (slug, name, description, requires_front, "
-        "requires_back, required_fields, is_active) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (body.slug.strip(), body.name.strip(), body.description.strip(),
-         body.requires_front, body.requires_back, _to_jsonb(fields), body.is_active),
+        "requires_back, required_fields, layout, is_active) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            body.slug.strip(),
+            body.name.strip(),
+            body.description.strip(),
+            body.requires_front,
+            body.requires_back,
+            _to_jsonb(fields),
+            _to_jsonb(body.layout),
+            body.is_active,
+        ),
     )
     return {"message": "Đã tạo biểu mẫu", "slug": body.slug.strip()}
 
@@ -142,6 +155,9 @@ def update_form(slug: str, body: UpdateFormBody) -> dict:
     if body.required_fields is not None:
         updates.append("required_fields = %s")
         params.append(_to_jsonb([f.model_dump() for f in body.required_fields]))
+    if body.layout is not None:
+        updates.append("layout = %s")
+        params.append(_to_jsonb(body.layout))
     if body.is_active is not None:
         updates.append("is_active = %s")
         params.append(body.is_active)
