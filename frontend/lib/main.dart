@@ -6,6 +6,25 @@ import 'data/session/session_store.dart';
 import 'features/auth/auth_screen.dart';
 import 'features/shell/home_shell.dart';
 
+/// Tắt hiệu ứng kéo dãn (stretch overscroll) trên toàn ứng dụng.
+/// Thay bằng ClampingScrollPhysics: cuộn dừng hẳn khi chạm giới hạn.
+class _NoStretchScrollBehavior extends ScrollBehavior {
+  const _NoStretchScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+      BuildContext context, Widget child, ScrollableDetails details) {
+    // Trả về widget con nguyên vẹn — không bọc thêm StretchingOverscrollIndicator.
+    return child;
+  }
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    // ClampingScrollPhysics: dừng tại giới hạn, không nảy, không kéo dãn.
+    return const ClampingScrollPhysics();
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SmartIdApp());
@@ -57,6 +76,8 @@ class _SmartIdAppState extends State<SmartIdApp> {
       title: 'Định danh SmartID',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
+      // Tắt hiệu ứng kéo dãn khi cuộn chạm giới hạn.
+      scrollBehavior: const _NoStretchScrollBehavior(),
       home: _buildHome(),
     );
   }

@@ -121,9 +121,11 @@ class PdfService {
     );
 
     final safeCode = code.replaceAll('#', '');
-    await Printing.layoutPdf(
-      onLayout: (_) => doc.save(),
-      name: 'SmartID_${formType.id}_$safeCode.pdf',
+    // sharePdf mở native share sheet: Zalo, Messenger, email, in, lưu file…
+    final pdfBytes = await doc.save();
+    await Printing.sharePdf(
+      bytes: pdfBytes,
+      filename: 'SmartID_${formType.id}_$safeCode.pdf',
     );
   }
 

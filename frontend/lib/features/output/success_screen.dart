@@ -28,9 +28,9 @@ class SuccessScreen extends StatefulWidget {
 class _SuccessScreenState extends State<SuccessScreen> {
   bool _exporting = false;
 
-  /// Bản cũ gọi `PdfService.exportForm` không `await`, không `try/catch` — offline
-  /// là ném exception async không ai bắt.
-  Future<void> _download() async {
+  /// Sinh PDF rồi mở native share sheet của hệ điều hành
+  /// (Zalo, Messenger, email, in, lưu file…).
+  Future<void> _share() async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
@@ -43,7 +43,7 @@ class _SuccessScreenState extends State<SuccessScreen> {
     } on PdfExportException catch (e) {
       _snack(e.message);
     } catch (e) {
-      _snack('Không xuất được PDF: $e');
+      _snack('Không chia sẻ được PDF: $e');
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -131,8 +131,20 @@ class _SuccessScreenState extends State<SuccessScreen> {
                 SizedBox(
                   width: double.infinity,
                   height: 52,
-                  child: OutlinedButton(
-                    onPressed: _exporting ? null : _download,
+                  child: OutlinedButton.icon(
+                    onPressed: _exporting ? null : _share,
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.share_rounded, size: 20),
+                    label: Text(
+                        _exporting ? 'Đang tạo PDF…' : 'Chia sẻ biểu mẫu PDF',
+                        style: const TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                       side: BorderSide(
@@ -141,10 +153,6 @@ class _SuccessScreenState extends State<SuccessScreen> {
                           borderRadius:
                               BorderRadius.circular(AppRadius.button)),
                     ),
-                    child: Text(
-                        _exporting ? 'Đang tạo PDF…' : 'Tải lại biểu mẫu PDF',
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
                 ),
                 const SizedBox(height: 12),

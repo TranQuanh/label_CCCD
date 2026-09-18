@@ -4,39 +4,27 @@
 #   Fine-tune / Deploy      : Qwen3-VL-8B-Instruct  (QLoRA 4-bit)
 #   pip install -r requirements.txt
 
-# ── Core ─────────────────────────────────────────────────────────────────
-torch>=2.1.0
-torchvision>=0.16.0
-accelerate>=0.27.0
-Pillow>=10.0.0
-tqdm>=4.66.0
-
-# ── Transformers + Qwen-VL ───────────────────────────────────────────────
-# Qwen2.5-VL-7B (gán nhãn) chạy được với transformers>=4.49.0 trên PyPI.
-# Qwen3-VL-8B (fine-tune/deploy) CẦN transformers cài từ source:
-#   pip install git+https://github.com/huggingface/transformers
-transformers>=4.49.0
-qwen-vl-utils>=0.0.8
-
-# ── Fine-tuning QLoRA (4-bit) ────────────────────────────────────────────
-peft>=0.10.0
-bitsandbytes>=0.43.0          # 4-bit NF4; bản Linux/Colab. Windows: dùng WSL hoặc bitsandbytes-windows
-
-# ── Data labeling UI (Gradio) ────────────────────────────────────────────
-gradio>=4.0.0
-
-# ── Deployment (FastAPI) ─────────────────────────────────────────────────
+# ── Runtime for backend (proxy mode) ─────────────────────────────────────
+# Only needed when running backend and frontend, calling model via ngrok.
 fastapi>=0.110.0
 uvicorn>=0.29.0
-python-multipart>=0.0.9       # bắt buộc cho UploadFile
-pyngrok>=7.0.0                # public URL khi deploy trên Colab
+python-multipart>=0.0.9
+psycopg[binary]>=3.1
+psycopg-pool>=3.1
+redis>=5.0.0
+pyjwt>=2.8.0
+bcrypt>=4.0.0
+requests>=2.25.0   # for calling ngrok-exposed model
 
-# ── Auth & dữ liệu (P1) ──────────────────────────────────────────────────
-psycopg[binary]>=3.1          # PostgreSQL driver (psycopg3)
-psycopg-pool>=3.1             # ConnectionPool cho psycopg3
-redis>=5.0.0                  # Redis client (blacklist token, batch queue)
-pyjwt>=2.8.0                  # JWT access token
-bcrypt>=4.0.0                 # hash mật khẩu (Bcrypt)
-
-# Optional: tăng tốc inference (cần CUDA >= 11.8 + GCC)
-# pip install flash-attn --no-build-isolation
+# ── Optional packages (uncomment if you need labeling, training, or local inference) ──
+# torch>=2.1.0
+# torchvision>=0.16.0
+# accelerate>=0.27.0
+# Pillow>=10.0.0
+# tqdm>=4.66.0
+# transformers>=4.49.0
+# qwen-vl-utils>=0.0.8
+# peft>=0.10.0
+# bitsandbytes>=0.43.0
+# gradio>=4.0.0
+# pyngrok>=7.0.0   # if you want to expose local backend via ngrok

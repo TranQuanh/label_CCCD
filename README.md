@@ -40,43 +40,75 @@ docs/      ARCHITECTURE · CHANGELOG · VLM_COMPARISON_PLAN · Discussion
 
 ```bash
 pip install -r requirements.txt
-# PyTorch + CUDA (nếu chạy local):
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
 > `bitsandbytes` (4-bit) chỉ chạy trên **Linux / Colab / WSL**, không hỗ trợ
 > Windows native.
 
-## Quy trình nhanh
+## Khởi động dự án
 
-Đường dẫn dưới đây dùng shim ở gốc nên chạy đúng như trước khi tái cấu trúc.
+### 1. Chuẩn bị môi trường Android Emulator
+Có một số cách để có được Android Emulator (AVD):
 
+**A. Dùng Android Studio (đơn giản nhất)**
+1. Tải và cài Android Studio từ https://developer.android.com/studio.
+2. Mở Android Studio → **More Actions** → **Virtual Device Manager** (hoặc qua menu **Tools > AVD Manager**).
+3. Nhấn **Create Virtual Device**, chọn loại thiết bị (Phone/Tablet), chọn hệ thống ảnh (ví dụ: Android 13.0 (Google Play) x86_64), sau đó **Finish**.
+4. Trong AVD Manager, chọn thiết bị vừa tạo và nhấn ▶️ **Play** để khởi động.
+
+**B. Chỉ cài Android SDK Command‑line tools (nhẹ hơn)**
+1. Tải "Command line tools only" từ trang Android Developer và giải nén vào một thư mục, ví dụ `C:\Android\cmdline-tools`.
+2. Thêm thư mục `cmdline-tools\bin` vào PATH để có thể chạy `sdkmanager` và `avdmanager`.
+3. Cài đặt hệ thống ảnh cần thiết:
+   ```bash
+   sdkmanager "platforms;android-33" "system-images;android-33;google_apis;x86_64" "emulator"
+   ```
+4. Tạo AVD:
+   ```bash
+   avdmanager create avd -n CCCD_x64_D -k "system-images;android-33;google_apis;x86_64"
+   ```
+5. Khởi động emulator:
+   ```bash
+   emulator -avd CCCD_x64_D -no-snapshot -gpu angle_indirect -no-boot-anim -camera-back webcam0
+   ```
+
+**C. Sử dụng thiết bị Android thực**
+- Kết nối điện thoại qua USB, bật **USB debugging** trong Settings → Developer options.
+- Thiết bị sẽ xuất hiện trong `flutter devices` và có thể chạy app trực tiếp.
+
+Sau khi emulator hoặc thiết bị thực đang chạy, bạn có thể lấy ID thiết bị bằng lệnh `flutter devices` và dùng trong bước chạy frontend.
+
+### 2. Chạy model trên Google Colab (tùy chọn)
+- Mở notebook Colab đã được chuẩn bị (ví dụ: `model/notebooks/deployment.ipynb`) và chạy tất cả các module để khởi động server mô hình tại URL công cộng (ví dụ qua `ngrok` hoặc Colab's own tunnel).
+- Lưu ý URL công khai mà backend sẽ gọi đến (ví dụ: `https://xxxxxx.ngrok.io`).
+
+### 3. Chạy backend
 ```bash
-# 1. Auto-label draft → duyệt tay bằng Gradio
-python -m src.data_pipeline.auto_label --input_dir data/raw --result_dir data/draft
-python -m src.data_pipeline.label_tool --jsonl data/draft/raw_draft.jsonl \
-    --front_dir data/Front --back_dir data/Back --share
+cd <path-to-project-root>
+# Thiết lập biến môi trường (ví dụ)
+$env:MODEL_KEY="internvl"
+$env:BASE_MODEL="OpenGVLab/InternVL3_5-2B-HF"
+$env:SKIP_MODEL_LOAD=0
+$env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/cccd"
+$env:REDIS_URL="redis://localhost:6379/0"
+$env:JWT_SECRET="dev-secret"
+$env:PYTHONIOENCODING="utf-8"
 
-# 2. Chia 80/10/10 (augment train-only) → fine-tune QLoRA
-python -m src.data_pipeline.prepare_dataset --input data/draft/raw_draft.jsonl --out_dir data/dataset
-python scripts/train.py --train_jsonl data/dataset/train.jsonl --val_jsonl data/dataset/val.jsonl \
-    --model_name OpenGVLab/InternVL3_5-2B-HF --output_dir checkpoints/internvl-cccd-lora-front
-
-# 3. Đánh giá trên test
-python scripts/evaluate.py --test_jsonl data/dataset/test.jsonl \
-    --adapter_dir checkpoints/internvl-cccd-lora-front
-
-# 4. Serve API (một model mỗi tiến trình, cả hai adapter mặt trước/sau dùng chung base)
-MODEL_KEY=internvl CHECKPOINT_DIR=checkpoints uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# POST 1 ảnh  → http://localhost:8000/extract-cccd/?side=truoc
-# POST N ảnh  → http://localhost:8000/extract-cccd/batch
-# API người dùng → http://localhost:8000/api/v1/*   (auth/register, auth/login, auth/change-password, users, audit-logs, forms, scan-records, review-queue)
-# Chạy không cần GPU để test luồng user: SKIP_MODEL_LOAD=1 uvicorn backend.main:app --port 8000
-
-# 5. App di động (xem frontend/README.md để dựng scaffold trước)
-cd frontend && flutter run --dart-define=USE_MOCK=false \
-                           --dart-define=API_BASE_URL=http://<IP-máy-chạy-API>:8000
+uvicorn backend.main:app --port 8000
 ```
+> Lưu ý: Thay đổi các giá trị biến môi trường cho phù hợp với môi trường của bạn (Cơ sở dữ liệu, Redis, v.v.).
+
+### 4. Chạy frontend
+```bash
+cd <path-to-project-root>\frontend
+# Liệt kê thiết bị có sẵn
+flutter devices
+# Chạy app trên thiết bị emulator (thay <device-id> bằng ID thiết bị như emulator-5556)
+flutter run -d <device-id> --dart-define=USE_MOCK=false --dart-define=API_BASE_URL=http://10.0.2.2:8000
+```
+> Nếu chạy trên emulator Android, IP `10.0.2.2` là địa chỉ aliases của máy host. Nếu backend chạy trên máy khác, thay `10.0.2.2` bằng IP máy host trong LAN.
+
+> **Lưu ý:** Nếu bạn chưa có AVD, hãy tạo nó qua Android AVD Manager trước.
 
 ## Điểm thiết kế nổi bật
 
