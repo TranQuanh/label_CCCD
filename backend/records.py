@@ -17,7 +17,7 @@ Mã hồ sơ (`code`) do SERVER cấp (quyết định thiết kế) — client 
 Dạng: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
 
 THAY ĐỔI QUAN TRỌNG (theo yêu cầu user):
-- Bỏ requirement admin review: record tự động có `review_status='reviewed'`
+- Bỏ requirement admin review: bỏ review_status
 - Viewer có thể submit record
 - Xoá chức năng review queue
 """
@@ -79,7 +79,6 @@ class SubmitRecordBody(BaseModel):
     supp: dict[str, str] = Field(default_factory=dict)
     card_side: str = Field(default="both", max_length=10)
     parse_ok: bool = True
-    raw_output: Optional[str] = None
     is_edited: bool = False
 
 
@@ -99,7 +98,6 @@ def _serialize(row: dict) -> dict:
         "code": row.get("code"),
         "form_id": row.get("form_slug"),
         "form_name": row.get("form_name"),
-        "review_status": row["review_status"],
         "extracted_data": row["extracted_data"],
         "supp": row.get("supp") or {},
         "card_side": row.get("card_side"),
@@ -112,7 +110,7 @@ def _serialize(row: dict) -> dict:
 def _record_join() -> str:
     """SELECT ... FROM bảng gốc (không dùng view mask nữa)."""
     return (
-        f"SELECT r.id, r.code, r.review_status, r.extracted_data, r.supp, "
+        f"SELECT r.id, r.code, r.extracted_data, r.supp, "
         f"r.card_side, r.parse_ok, r.is_edited, r.created_at, "
         f"f.slug AS form_slug, f.name AS form_name "
         f"FROM tblScanRecord r LEFT JOIN tblFormType f ON f.id = r.form_type_id"
@@ -147,7 +145,7 @@ def submit_record(
     """
     Gửi một hồ sơ trích xuất lên server.
 
-    Server sinh mã hồ sơ, đặt `review_status='reviewed'` (đã duyệt tự động).
+    Server sinh mã hồ sơ.
     Trường bổ sung `supp` lưu riêng; `extracted_data` là JSONB tiếng Việt snake_case.
     Tất cả user (kể cả viewer) đều có thể submit.
     """
@@ -165,11 +163,11 @@ def submit_record(
     device = request.headers.get("user-agent")
 
     record_id = db.fetch_one(
-        "INSERT INTO tblScanRecord (code, user_id, form_type_id, review_status, "
-        "extracted_data, supp, confidence_scores, parse_ok, raw_output, is_edited, card_side) "
-        "VALUES (%s, %s, %s, 'reviewed', %s, %s, NULL, %s, %s, %s, %s) RETURNING id",
+        "INSERT INTO tblScanRecord (code, user_id, form_type_id, "
+        "extracted_data, supp, parse_ok, is_edited, card_side) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (code, user["id"], form_uuid, _jsonb(body.extracted_data),
-         _jsonb(body.supp), body.parse_ok, body.raw_output, body.is_edited, body.card_side),
+         _jsonb(body.supp), body.parse_ok, body.is_edited, body.card_side),
     )["id"]
 
     audit(user["id"], "record.create", "record", record_id,
@@ -235,7 +233,7 @@ def update_record(
     Cập nhật thông tin một hồ sơ đã gửi (chủ sở hữu / admin).
 
     Chỉ cho phép sửa `extracted_data`, `supp`, `parse_ok`, `is_edited`.
-    Không thay đổi `code`, `form_type_id`, `review_status`, `created_at`.
+    Không thay đổi `code`, `form_type_id`, `created_at`.
     `is_edited` tự động đặt True để đánh dấu đã qua tay người dùng.
     """
     # Kiểm tra record tồn tại và user có quyền

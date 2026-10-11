@@ -135,7 +135,6 @@ class _PreviewScreenState extends State<PreviewScreen> {
       date: _record!.date,
       card: _card,
       supp: _supp,
-      reviewStatus: _record!.reviewStatus,
     );
     final result = await Navigator.of(context).push<SubmittedRecord>(
       MaterialPageRoute(
@@ -394,6 +393,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
           18, MediaQuery.of(context).padding.top + 12, 18, 12),
       child: Row(
         children: [
+          // Nút back
           InkWell(
             onTap: () => Navigator.of(context).maybePop(),
             borderRadius: BorderRadius.circular(10),
@@ -409,23 +409,58 @@ class _PreviewScreenState extends State<PreviewScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          // Tiêu đề
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Biểu mẫu hoàn chỉnh',
+                const Text('Biểu mẫu hoàn chỉnh',
                     style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                         color: Colors.white)),
-                Text('Xem trước trước khi tải PDF',
-                    style: TextStyle(
-                        fontSize: 11.5,
-                        fontStyle: FontStyle.italic,
-                        color: AppColors.onNavy)),
+                Text(
+                  widget.readOnly
+                      ? 'Hồ sơ · ${widget.code}'
+                      : 'Xem trước trước khi gửi',
+                  style: const TextStyle(
+                      fontSize: 11.5,
+                      fontStyle: FontStyle.italic,
+                      color: AppColors.onNavy),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
             ),
           ),
+          // Nút Sửa — chỉ hiển thị ở chế độ readOnly có record
+          if (widget.readOnly && _record != null) ...[
+            const SizedBox(width: 10),
+            InkWell(
+              onTap: _openEdit,
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                height: 34,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.cobalt.withValues(alpha: .85),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.edit_outlined, size: 14, color: Colors.white),
+                    SizedBox(width: 5),
+                    Text('Sửa',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white)),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -440,51 +475,31 @@ class _PreviewScreenState extends State<PreviewScreen> {
     );
   }
 
-  /// Thanh hành động chế độ xem hồ sơ đã tạo: Tải PDF · Sửa · Xong.
+  /// Thanh hành động chế độ xem hồ sơ đã tạo: Chia sẻ PDF · Xong.
+  /// Nút Sửa đã chuyển lên header.
   Widget _readOnlyActions() {
     return Row(
       children: [
-        // Nút Tải PDF
-        SizedBox(
-          height: 54,
-          child: ElevatedButton.icon(
-            onPressed: _download,
-            icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-            label: const Text('Tải PDF',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.star,
-              foregroundColor: AppColors.navy,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.button)),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        // Nút Sửa (chỉ hiển thị nếu có record gốc)
-        if (_record != null) ...[
-          SizedBox(
+        // Nút Chia sẻ PDF — mở native share sheet (Zalo, Mess, email, in...)
+        Expanded(
+          child: SizedBox(
             height: 54,
             child: ElevatedButton.icon(
-              onPressed: _openEdit,
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: const Text('Sửa',
-                  style:
-                      TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              onPressed: _download,
+              icon: const Icon(Icons.share_outlined, size: 20),
+              label: const Text('Chia sẻ PDF',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.cobalt,
-                foregroundColor: Colors.white,
+                backgroundColor: AppColors.star,
+                foregroundColor: AppColors.navy,
                 elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.button)),
               ),
             ),
           ),
-          const SizedBox(width: 8),
-        ],
+        ),
+        const SizedBox(width: 12),
         // Nút Xong
         Expanded(
           child: SizedBox(
@@ -493,8 +508,8 @@ class _PreviewScreenState extends State<PreviewScreen> {
               onPressed: () => Navigator.of(context).maybePop(),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
-                side:
-                    BorderSide(color: Colors.white.withValues(alpha: .35), width: 1.5),
+                side: BorderSide(
+                    color: Colors.white.withValues(alpha: .35), width: 1.5),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.button)),
               ),
@@ -507,7 +522,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
     );
   }
 
-  /// Thanh hành động chế độ gửi hồ sơ mới: Tải PDF · Gửi hồ sơ.
+  /// Thanh hành động chế độ gửi hồ sơ mới: Chia sẻ PDF · Gửi hồ sơ.
   Widget _submitActions() {
     return Row(
       children: [
@@ -516,9 +531,9 @@ class _PreviewScreenState extends State<PreviewScreen> {
             height: 54,
             child: ElevatedButton.icon(
               onPressed: _download,
-              icon: const Icon(Icons.picture_as_pdf_outlined, size: 20),
-              label: const Text('Tải PDF',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              icon: const Icon(Icons.share_outlined, size: 20),
+              label: const Text('Chia sẻ PDF',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.star,
                 foregroundColor: AppColors.navy,

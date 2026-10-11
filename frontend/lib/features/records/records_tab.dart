@@ -161,7 +161,6 @@ class _RecordCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final form = sessionStore.formById(record.formId) ??
         formTypeById(record.formId);
-    final isPending = record.reviewStatus == 'pending';
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.card),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
@@ -209,19 +208,12 @@ class _RecordCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Flexible(
-                        child: Text(form.title,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.ink)),
-                      ),
-                      const SizedBox(width: 6),
-                      if (isPending) _statusChip('Chờ duyệt', AppColors.warn)
-                      else _statusChip('Đã duyệt', AppColors.valid),
-                    ]),
+                    Text(form.title,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink)),
                     const SizedBox(height: 2),
                     Text(record.code,
                         style: const TextStyle(
@@ -255,15 +247,4 @@ class _RecordCard extends StatelessWidget {
       ),
     );
   }
-
-  Widget _statusChip(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .12),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 10, fontWeight: FontWeight.w700, color: color)),
-      );
 }

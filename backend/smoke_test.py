@@ -54,7 +54,7 @@ def main() -> None:
     import psycopg
 
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-        conn.execute("TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, tblBatchJob, tblUser CASCADE")
+        conn.execute("TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, tblUser CASCADE")
         conn.execute("DELETE FROM tblFormType WHERE slug = 'work_permit'")
         conn.commit()
 
@@ -305,9 +305,8 @@ def _run(client: TestClient) -> None:
     r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"})
     body = r.json()
     check("GET /scan-records (operator) 200", r.status_code == 200, str(body)[:80])
-    check("lịch sử có record vừa gửi + pending", body.get("count", 0) >= 1
-          and body["records"][0]["code"] == rec_code
-          and body["records"][0]["review_status"] == "pending")
+    check("lịch sử có record vừa gửi", body.get("count", 0) >= 1
+          and body["records"][0]["code"] == rec_code)
     check("lịch sử trả supp + extracted_data", body["records"][0].get("supp", {}).get("phone") == "0901234567"
           and body["records"][0]["extracted_data"].get("so_cccd") == "001201123456")
     check("lịch sử trả tên biểu mẫu", body["records"][0].get("form_name") == "Đăng ký mở thẻ ATM")
@@ -319,18 +318,7 @@ def _run(client: TestClient) -> None:
     r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {admin_access}"})
     check("admin xem được record (có quyền)", r.status_code == 200, str(r.json())[:80])
 
-    print("== P2: Hàng đợi duyệt + duyệt ==")
-    r = client.get("/api/v1/scan-records/review-queue", headers={"Authorization": f"Bearer {operator1_access}"})
-    body = r.json()
-    check("review-queue có record pending", body.get("count", 0) >= 1, str(body)[:80])
-
-    r = client.patch(f"/api/v1/scan-records/{rec_id}/review",
-                     headers={"Authorization": f"Bearer {operator1_access}"},
-                     json={"review_status": "reviewed"})
-    check("duyệt record → 200", r.status_code == 200, str(r.json())[:80])
-
-    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {operator1_access}"})
-    check("record sau duyệt = reviewed", r.json().get("review_status") == "reviewed")
+    # (Đã bỏ requirement duyệt hồ sơ: không còn review-queue và review_status)
 
     print("== P2: Viewer — chỉ đọc bản đã duyệt, CCCD bị che ==")
     # nguyenvana đã được đổi role viewer ở phần P1 admin bên trên.

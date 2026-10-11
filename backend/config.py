@@ -49,5 +49,5 @@ EMAIL_VERIFICATION_ENABLED: bool = os.getenv("EMAIL_VERIFICATION_ENABLED", "fals
 )
 
 # ── Chế độ chạy ────────────────────────────────────────────────────────────
-# Mặc định = 1 (true) để máy local luôn chạy nhẹ dạng Proxy forwarding lên Colab
-SKIP_MODEL_LOAD: bool = os.getenv("SKIP_MODEL_LOAD", "1").lower() in ("1", "true", "yes", "on")
+# Backend máy cục bộ luôn chạy chế độ Proxy nhẹ (inference xử lý trên Colab GPU)
+SKIP_MODEL_LOAD: bool = True
