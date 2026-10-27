@@ -2,7 +2,8 @@
 main.py (FastAPI)
 =================
 Backend API phục vụ hệ thống e-KYC CCCD:
-  1. API Người dùng, Xác thực & RBAC, Biểu mẫu, Lịch sử hồ sơ (/api/v1/*) trên PostgreSQL + Redis.
+  1. API Người dùng, Xác thực & RBAC, Biểu mẫu, Lịch sử hồ sơ, Profile CCCD
+     (/api/v1/*, Profile CCCD tại /api/v1/profiles) trên PostgreSQL + Redis.
   2. Proxy chuyển tiếp trích xuất CCCD (/extract-cccd/*) sang Colab Inference Server (GPU).
 """
 
@@ -17,7 +18,7 @@ from typing import List
 import requests
 from fastapi import FastAPI, File, Query, UploadFile
 
-from . import audit, auth, config, db, forms, records, redis_client, users
+from . import audit, auth, config, db, forms, profiles, records, redis_client, users
 
 INFERENCE_SERVER_URL = config.INFERENCE_SERVER_URL
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -45,6 +46,9 @@ app.include_router(forms.router, prefix="/api/v1")
 
 # ── P2: hồ sơ trích xuất (lịch sử từ PostgreSQL) ───────────────────────────
 app.include_router(records.router, prefix="/api/v1")
+
+# ── Profile CCCD của người dùng (nhiều profile / user, bảng tblCccdProfile) ─
+app.include_router(profiles.router, prefix="/api/v1")
 
 
 @app.get("/health")

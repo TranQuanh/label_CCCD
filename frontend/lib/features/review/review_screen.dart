@@ -54,12 +54,18 @@ class ReviewScreen extends StatefulWidget {
   final List<String> needsReview;
   final List<FieldIssue> issues;
 
+  /// true khi dữ liệu đến từ ảnh chụp thẻ (ProcessingScreen). false khi vào từ
+  /// "Dùng Profile" / "Nhập thủ công" → ẩn ô ảnh TRƯỚC/SAU và đổi nút camera
+  /// thành nút quay lại (không có ảnh nào để chụp lại).
+  final bool fromScan;
+
   const ReviewScreen({
     super.key,
     required this.formType,
     required this.card,
     this.needsReview = const [],
     this.issues = const [],
+    this.fromScan = false,
   });
 
   @override
@@ -157,6 +163,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
       ..idNumber = Validators.normalizeIdNumber(_card['idNumber']!.text)
       ..sex = Validators.normalizeSex(_card['sex']!.text);
 
+    // Thẻ quét cho biểu mẫu KHÔNG được ghi vào Profile CCCD (có thể là thẻ
+    // của khách) — Profile chỉ đổi khi người dùng lưu ở tab Profile.
     final supp = {
       for (final e in _supp.entries) e.key: e.value.text.trim(),
     };
@@ -376,12 +384,31 @@ class _ReviewScreenState extends State<ReviewScreen> {
       padding: EdgeInsets.fromLTRB(
           20, MediaQuery.of(context).padding.top + 12, 20, 16),
       child: Row(children: [
-        Row(children: [
-          _thumb('TRƯỚC', const Color(0xFF334063)),
-          const SizedBox(width: 6),
-          _thumb('SAU', const Color(0xFF3A3550)),
-        ]),
-        const SizedBox(width: 14),
+        // Nút quay lại màn trước.
+        InkWell(
+          onTap: () => Navigator.of(context).maybePop(),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // Ô ảnh TRƯỚC/SAU chỉ có nghĩa khi dữ liệu đến từ ảnh chụp thẻ.
+        if (widget.fromScan) ...[
+          Row(children: [
+            _thumb('TRƯỚC', const Color(0xFF334063)),
+            const SizedBox(width: 6),
+            _thumb('SAU', const Color(0xFF3A3550)),
+          ]),
+          const SizedBox(width: 14),
+        ],
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -520,8 +547,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.button)),
               ),
-              child: const Icon(Icons.camera_alt_outlined,
-                  color: AppColors.navy, size: 20),
+              // Từ luồng quét: nút này = chụp lại; còn lại: chỉ là quay lại.
+              child: Icon(
+                  widget.fromScan
+                      ? Icons.camera_alt_outlined
+                      : Icons.arrow_back,
+                  color: AppColors.navy,
+                  size: 20),
             ),
           ),
           const SizedBox(width: 12),

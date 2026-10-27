@@ -5,6 +5,8 @@ import '../../core/theme/app_theme.dart';
 import '../../data/api/api_exception.dart';
 import '../../data/models/form_type.dart';
 import '../../data/repositories/extraction_repository.dart';
+import '../../data/session/session_store.dart';
+import '../profile/edit_profile_screen.dart';
 import '../review/review_screen.dart';
 
 /// Trạng thái AI đang trích xuất dữ liệu từ 2 mặt thẻ.
@@ -14,14 +16,18 @@ import '../review/review_screen.dart';
 /// quay vĩnh viễn và người dùng kẹt cứng. Ở đây mọi lỗi đều có màn hình riêng với
 /// hai lối ra: **Thử lại** (dùng đúng 2 ảnh cũ) và **Chụp lại**.
 class ProcessingScreen extends StatefulWidget {
-  final FormType formType;
+  final FormType? formType;
+  final bool isProfileScan;
+  final bool isForNewProfile;
   final String? frontPath;
   final String? backPath;
   final ExtractionRepository? repository;
 
   const ProcessingScreen({
     super.key,
-    required this.formType,
+    this.formType,
+    this.isProfileScan = false,
+    this.isForNewProfile = false,
     this.frontPath,
     this.backPath,
     this.repository,
@@ -64,14 +70,44 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         backPath: widget.backPath,
       );
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
-        builder: (_) => ReviewScreen(
-          formType: widget.formType,
-          card: result.card,
-          needsReview: result.needsReview,
-          issues: result.issues,
-        ),
-      ));
+
+      // KHÔNG lưu profile ở đây: chỉ lưu khi người dùng kiểm tra rồi bấm Lưu
+      // ở EditProfileScreen (Back ở màn xác nhận thì không để lại profile nào).
+      if (widget.isProfileScan) {
+        if (widget.isForNewProfile) {
+          // Quét tạo profile mới → màn xác nhận, Lưu mới thêm profile.
+          Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+            builder: (_) => EditProfileScreen(
+              initialCard: result.card,
+              profileIndex: null,
+              isInitialScan: true,
+            ),
+          ));
+        } else {
+          // Quét cập nhật profile mặc định hiện có → Lưu mới cập nhật.
+          Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+            builder: (_) => EditProfileScreen(
+              initialCard: result.card,
+              profileIndex: sessionStore.hasProfiles
+                  ? sessionStore.selectedProfileIndex
+                  : null,
+              isInitialScan: true,
+            ),
+          ));
+        }
+      } else {
+        // Quét thẻ cho biểu mẫu: KHÔNG động vào Profile CCCD (thẻ có thể là
+        // của khách, không được ghi đè profile mặc định).
+        Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+          builder: (_) => ReviewScreen(
+            formType: widget.formType!,
+            card: result.card,
+            needsReview: result.needsReview,
+            issues: result.issues,
+            fromScan: true,
+          ),
+        ));
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -99,12 +135,35 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(36),
-            child: Center(
-              child: _error == null ? _loadingView() : _errorView(),
+          child: Stack(children: [
+            Padding(
+              padding: const EdgeInsets.all(36),
+              child: Center(
+                child: _error == null ? _loadingView() : _errorView(),
+              ),
             ),
-          ),
+            // Nút quay lại: huỷ trích xuất (kết quả về sau bị bỏ qua nhờ
+            // kiểm tra `mounted`) và quay về màn trước.
+            Positioned(
+              top: 8,
+              left: 16,
+              child: InkWell(
+                onTap: () => Navigator.of(context).maybePop(),
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.arrow_back,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+          ]),
         ),
       ),
     );

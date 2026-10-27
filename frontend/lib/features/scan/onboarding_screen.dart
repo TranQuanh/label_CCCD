@@ -5,8 +5,16 @@ import 'camera_screen.dart';
 
 /// Màn hình 3 — Hướng dẫn cầm/chụp thẻ trước khi mở camera.
 class OnboardingScreen extends StatelessWidget {
-  final FormType formType;
-  const OnboardingScreen({super.key, required this.formType});
+  final FormType? formType;
+  final bool isProfileScan;
+  final bool isForNewProfile;
+
+  const OnboardingScreen({
+    super.key,
+    this.formType,
+    this.isProfileScan = false,
+    this.isForNewProfile = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -39,12 +47,18 @@ class OnboardingScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Hướng dẫn quét thẻ',
-                        style: TextStyle(
+                    Text(
+                        isProfileScan
+                            ? 'Quét thẻ tạo Profile'
+                            : 'Hướng dẫn quét thẻ',
+                        style: const TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w800,
                             color: AppColors.ink)),
-                    Text(formType.title,
+                    Text(
+                        isProfileScan
+                            ? 'Lưu thông tin CCCD cho mọi biểu mẫu'
+                            : (formType?.title ?? 'Quét CCCD tự động'),
                         style: const TextStyle(
                             fontSize: 12, color: AppColors.muted)),
                   ],
@@ -145,7 +159,11 @@ class OnboardingScreen extends StatelessWidget {
               child: ElevatedButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                      builder: (_) => CameraScreen(formType: formType)),
+                      builder: (_) => CameraScreen(
+                            formType: formType,
+                            isProfileScan: isProfileScan,
+                            isForNewProfile: isForNewProfile,
+                          )),
                 ),
                 icon: const Icon(Icons.photo_camera_outlined, size: 20),
                 label: const Text('Bắt đầu quét mặt trước',

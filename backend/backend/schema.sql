@@ -1,9 +1,11 @@
 -- schema.sql
 -- ===========
 -- Lược đồ cơ sở dữ liệu P1 + P2 — xác thực & RBAC + lịch sử hồ sơ.
--- 5 bảng: tblUser, tblRefreshToken, tblFormType, tblScanRecord, tblAuditLog.
+-- 6 bảng: tblUser, tblRefreshToken, tblFormType, tblScanRecord, tblAuditLog, tblCccdProfile.
 --
 -- Thay đổi so với phiên bản cũ:
+--   - Thêm tblCccdProfile (nhiều Profile CCCD / user, ngang hàng); chuyển dữ liệu
+--     tblUser.cccd_profile cũ sang bảng mới (cột cũ vẫn giữ, DEPRECATED)
 --   - Xoá tblBatchJob (chưa dùng, không có router)
 --   - Xoá cột confidence_scores khỏi tblScanRecord (luôn NULL, không dùng)
 --   - Xoá cột batch_job_id khỏi tblScanRecord (FK tới bảng đã xoá)
@@ -32,9 +34,21 @@ CREATE TABLE IF NOT EXISTS tblUser (
     failed_login_count INT          NOT NULL DEFAULT 0,
     locked_until       TIMESTAMP,
     token_version      INT          NOT NULL DEFAULT 0,   -- tăng khi đổi role → vô hiệu token cũ
+    cccd_profile       JSONB,                             -- (DEPRECATED — dùng tblCccdProfile)
     created_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+
+-- Migration: thêm cột cccd_profile vào tblUser nếu chưa có
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE lower(table_name) = 'tbluser' AND column_name = 'cccd_profile'
+    ) THEN
+        ALTER TABLE tblUser ADD COLUMN cccd_profile JSONB;
+    END IF;
+END $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. tblRefreshToken — refresh token (hash trong DB, xoay vòng được)
@@ -112,6 +126,7 @@ CREATE TABLE IF NOT EXISTS tblScanRecord (
     parse_ok       BOOLEAN,
     is_edited      BOOLEAN NOT NULL DEFAULT FALSE,
     card_side      VARCHAR(10) CHECK (card_side IN ('front','back','both')),
+    is_hidden      BOOLEAN NOT NULL DEFAULT FALSE,  -- admin ẩn → chủ hồ sơ không thấy
     created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -140,6 +155,9 @@ BEGIN
         ALTER TABLE tblScanRecord ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT NOW();
     END IF;
 END $$;
+
+-- Migration: cờ ẩn hồ sơ (admin ẩn → chủ hồ sơ không còn thấy trong lịch sử)
+ALTER TABLE tblScanRecord ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Migration: xoá cột confidence_scores nếu DB cũ còn tồn tại
 DO $$
@@ -226,6 +244,37 @@ CREATE TABLE IF NOT EXISTS tblAuditLog (
 
 CREATE INDEX IF NOT EXISTS idx_audit_user    ON tblAuditLog(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON tblAuditLog(created_at DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 6. tblCccdProfile — Profile CCCD đã lưu của người dùng (nhiều profile / user,
+--    các profile ngang hàng, không có profile "mặc định")
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tblCccdProfile (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES tblUser(id) ON DELETE CASCADE,
+    data        JSONB NOT NULL,                 -- map snake_case (so_cccd, ho_va_ten, ...)
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cccd_profile_user ON tblCccdProfile(user_id, created_at);
+
+-- Migration: bỏ khái niệm profile mặc định trên DB cũ (index + cột is_default)
+DROP INDEX IF EXISTS uq_cccd_profile_default;
+ALTER TABLE tblCccdProfile DROP COLUMN IF EXISTS is_default;
+
+-- Migration: chuyển tblUser.cccd_profile (1 object, bản cũ) sang tblCccdProfile
+-- (chỉ với user chưa có profile nào → chạy lại nhiều lần không nhân bản dữ liệu)
+DO $$
+BEGIN
+    INSERT INTO tblCccdProfile (user_id, data)
+    SELECT u.id, u.cccd_profile
+    FROM tblUser u
+    WHERE u.cccd_profile IS NOT NULL
+      AND jsonb_typeof(u.cccd_profile) = 'object'
+      AND u.cccd_profile <> '{}'::jsonb
+      AND NOT EXISTS (SELECT 1 FROM tblCccdProfile p WHERE p.user_id = u.id);
+END $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Seed: 3 loại biểu mẫu (khớp kFormTypes phía frontend)

@@ -14,8 +14,16 @@ import 'processing_screen.dart';
 /// Ảnh chụp được ghi ra thư mục tạm của hệ điều hành và bị xoá ngay sau khi
 /// backend trích xuất xong (xem `ExtractionRepository`).
 class CameraScreen extends StatefulWidget {
-  final FormType formType;
-  const CameraScreen({super.key, required this.formType});
+  final FormType? formType;
+  final bool isProfileScan;
+  final bool isForNewProfile;
+
+  const CameraScreen({
+    super.key,
+    this.formType,
+    this.isProfileScan = false,
+    this.isForNewProfile = false,
+  });
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -169,6 +177,8 @@ class _CameraScreenState extends State<CameraScreen> {
     Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
       builder: (_) => ProcessingScreen(
         formType: widget.formType,
+        isProfileScan: widget.isProfileScan,
+        isForNewProfile: widget.isForNewProfile,
         frontPath: _frontPath,
         backPath: path,
       ),
@@ -178,6 +188,31 @@ class _CameraScreenState extends State<CameraScreen> {
   void _toast(String msg) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(msg)));
 
+  /// Nút quay lại: đang ở mặt sau → về bước chụp mặt trước (chụp lại);
+  /// đang ở mặt trước → thoát màn camera.
+  void _goBack() {
+    if (_busy) return;
+    if (_isBack) {
+      setState(() {
+        _isBack = false;
+        _frontPath = null;
+      });
+      return;
+    }
+    Navigator.of(context).maybePop();
+  }
+
+  /// Nút quay lại góc trên trái — dùng chung cho mọi trạng thái màn camera.
+  Widget _backButton() => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: _circle(
+            const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+            _goBack,
+          ),
+        ),
+      );
+
   @override
   void dispose() {
     _controller?.dispose();
@@ -186,13 +221,22 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Nút Back hệ thống ở bước mặt sau → về bước mặt trước thay vì thoát.
+    return PopScope(
+      canPop: !_isBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: _error != null
-          ? _errorView()
+          ? Stack(children: [_errorView(), _backButton()])
           : !_ready
-              ? const Center(
-                  child: CircularProgressIndicator(color: AppColors.star))
+              ? Stack(children: [
+                  const Center(
+                      child: CircularProgressIndicator(color: AppColors.star)),
+                  _backButton(),
+                ])
               : Stack(children: [
                   Positioned.fill(
                     child: _controller != null
@@ -219,6 +263,7 @@ class _CameraScreenState extends State<CameraScreen> {
                   _topBar(),
                   _bottomControls(),
                 ]),
+      ),
     );
   }
 
@@ -266,8 +311,8 @@ class _CameraScreenState extends State<CameraScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _circle(const Icon(Icons.close, color: Colors.white, size: 20),
-                  () => Navigator.of(context).maybePop()),
+              _circle(const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                  _goBack),
               Column(children: [
                 Text(_isBack ? 'Mặt sau CCCD' : 'Mặt trước CCCD',
                     style: const TextStyle(

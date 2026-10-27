@@ -12,6 +12,10 @@ Quyền hạn (RBAC):
                                truyền `?user_id=` để xem của người khác. viewer:
                                hồ sơ của chính mình.
   - GET  /scan-records/{id}  — chủ sở hữu / admin.
+  - GET  /scan-records?all_users=true     — admin: hồ sơ của mọi người dùng.
+  - PATCH /scan-records/{id}/visibility   — admin: ẩn / hiện hồ sơ. Hồ sơ bị ẩn
+                               không hiện trong lịch sử của chủ hồ sơ và chủ hồ sơ
+                               không xem/sửa được (404); admin vẫn thấy.
 
 Mã hồ sơ (`code`) do SERVER cấp (quyết định thiết kế) — client không tự sinh nữa.
 Dạng: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
@@ -36,7 +40,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .audit import audit
-from .deps import get_current_user
+from .deps import get_current_user, require_admin
 from .forms import resolve_form_uuid
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,11 @@ class SubmitRecordBody(BaseModel):
     is_edited: bool = False
 
 
+class VisibilityBody(BaseModel):
+    """Body cho PATCH /scan-records/{id}/visibility (chỉ admin)."""
+    is_hidden: bool
+
+
 class UpdateRecordBody(BaseModel):
     """Body cho PATCH /scan-records/{id} — cập nhật thông tin đã trích xuất."""
     extracted_data: dict[str, Any] = Field(default_factory=dict)
@@ -103,17 +112,24 @@ def _serialize(row: dict) -> dict:
         "card_side": row.get("card_side"),
         "parse_ok": row.get("parse_ok"),
         "is_edited": row.get("is_edited"),
+        "is_hidden": bool(row.get("is_hidden")),
+        "owner_id": str(row["user_id"]) if row.get("user_id") else None,
+        "owner_username": row.get("owner_username"),
+        "owner_name": row.get("owner_name"),
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
     }
 
 
 def _record_join() -> str:
-    """SELECT ... FROM bảng gốc (không dùng view mask nữa)."""
+    """SELECT ... FROM bảng gốc + biểu mẫu + chủ hồ sơ."""
     return (
-        f"SELECT r.id, r.code, r.extracted_data, r.supp, "
-        f"r.card_side, r.parse_ok, r.is_edited, r.created_at, "
-        f"f.slug AS form_slug, f.name AS form_name "
-        f"FROM tblScanRecord r LEFT JOIN tblFormType f ON f.id = r.form_type_id"
+        f"SELECT r.id, r.code, r.user_id, r.extracted_data, r.supp, "
+        f"r.card_side, r.parse_ok, r.is_edited, r.is_hidden, r.created_at, "
+        f"f.slug AS form_slug, f.name AS form_name, "
+        f"u.username AS owner_username, u.full_name AS owner_name "
+        f"FROM tblScanRecord r "
+        f"LEFT JOIN tblFormType f ON f.id = r.form_type_id "
+        f"LEFT JOIN tblUser u ON u.id = r.user_id"
     )
 
 
@@ -121,13 +137,15 @@ def _get_record_accessible(record_id: str, user: dict) -> dict:
     """
     Lấy 1 record mà user được phép xem: owner/admin.
     404 nếu không tồn tại HOẶC không có quyền (không lộ sự tồn tại).
+    Hồ sơ bị admin ẩn coi như không tồn tại với chủ hồ sơ (không xem/sửa được).
     """
     role = user["role"]
     if role == "admin":
         query = f"{_record_join()} WHERE r.id = %s"
         params = (record_id,)
     else:
-        query = f"{_record_join()} WHERE r.id = %s AND r.user_id = %s"
+        query = (f"{_record_join()} WHERE r.id = %s AND r.user_id = %s "
+                 f"AND r.is_hidden = FALSE")
         params = (record_id, user["id"])
     row = db.fetch_one(query, params)
     if row is None:
@@ -182,30 +200,34 @@ def list_records(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user_id: Optional[str] = Query(None, description="Chỉ admin: xem hồ sơ của user khác"),
+    all_users: bool = Query(False, description="Chỉ admin: xem hồ sơ của mọi người dùng"),
 ) -> dict:
     """
     Lịch sử hồ sơ từ PostgreSQL.
 
-    viewer: hồ sơ của chính mình.
-    operator: hồ sơ của chính mình. admin: của mình, hoặc `?user_id=` của khác.
+    operator/viewer: hồ sơ của chính mình, TRỪ hồ sơ bị admin ẩn.
+    admin: của mình; `?user_id=` của một người khác; `?all_users=true` của mọi
+    người (kèm cả hồ sơ đã ẩn, để quản lý ẩn/hiện).
     """
     role = user["role"]
 
     clauses: list[str] = []
     params: list[Any] = []
-    
+    query = f"{_record_join()}"
+
     if role == "admin":
-        query = f"{_record_join()}"
-        if user_id:
+        if all_users:
+            pass  # không lọc theo người dùng
+        elif user_id:
             clauses.append("r.user_id = %s")
             params.append(user_id)
         else:
             clauses.append("r.user_id = %s")
             params.append(user["id"])
     else:  # operator hoặc viewer
-        query = f"{_record_join()}"
         clauses.append("r.user_id = %s")
         params.append(user["id"])
+        clauses.append("r.is_hidden = FALSE")
 
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
@@ -258,6 +280,39 @@ def update_record(
     # Trả về record sau khi cập nhật
     row = _get_record_accessible(record_id, user)
     return _serialize(row)
+
+
+@router.patch("/{record_id}/visibility")
+def set_record_visibility(
+    record_id: str,
+    body: VisibilityBody,
+    request: Request,
+    admin: dict = Depends(require_admin),
+) -> dict:
+    """
+    Admin ẩn / hiện một hồ sơ. Hồ sơ bị ẩn không còn xuất hiện trong lịch sử
+    của chủ hồ sơ và chủ hồ sơ không xem/sửa được; dữ liệu vẫn giữ nguyên.
+    """
+    try:
+        record_id = str(uuid_mod.UUID(record_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "UPDATE tblScanRecord SET is_hidden = %s, updated_at = NOW() "
+            "WHERE id = %s RETURNING id",
+            (body.is_hidden, record_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+        conn.commit()
+
+    ip = request.client.host if request.client else None
+    device = request.headers.get("user-agent")
+    audit(admin["id"], "record.hide" if body.is_hidden else "record.show",
+          "record", record_id, None, ip, device)
+    return _serialize(_get_record_accessible(record_id, admin))
 
 
 @router.get("/{record_id}")

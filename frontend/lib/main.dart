@@ -50,7 +50,7 @@ class _SmartIdAppState extends State<SmartIdApp> {
   Future<void> _restore() async {
     // Chế độ mock: chỉ khởi tạo hồ sơ mẫu, không cần token.
     if (ApiConfig.useMock) {
-      sessionStore.seedDemoRecords();
+      // login() ở chế độ mock đã tự seed hồ sơ mẫu — gọi thêm ở đây sẽ ra 2 bản.
       await sessionStore.login(
           identifier: 'nguyenvana@demo.vn', password: 'demoPass123');
       if (mounted) {

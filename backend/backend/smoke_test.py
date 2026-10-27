@@ -348,6 +348,58 @@ def _run(client: TestClient) -> None:
     r = client.get("/api/v1/scan-records/review-queue", headers={"Authorization": f"Bearer {viewer_access}"})
     check("viewer xem review-queue → 403", r.status_code == 403, str(r.json()))
 
+    print("== Profile CCCD (/profiles) ==")
+    op_h = {"Authorization": f"Bearer {operator1_access}"}
+    admin_h = {"Authorization": f"Bearer {admin_access}"}
+    r = client.get("/api/v1/profiles", headers=op_h)
+    check("GET /profiles rỗng 200", r.status_code == 200 and r.json().get("profiles") == [], str(r.json()))
+
+    prof1 = {**card, "so_cccd": "001201123456"}
+    prof2 = {**card, "so_cccd": "001201654321", "ho_va_ten": "TRẦN THỊ B"}
+    r = client.post("/api/v1/profiles", headers=op_h, json={"data": prof1})
+    p1 = r.json()
+    check("tạo profile 1 → 201, không còn trường is_default",
+          r.status_code == 201 and "is_default" not in p1, str(p1))
+    r = client.post("/api/v1/profiles", headers=op_h, json={"data": prof2})
+    p2 = r.json()
+    check("tạo profile 2 → 201", r.status_code == 201 and bool(p2.get("id")), str(p2))
+
+    r = client.post("/api/v1/profiles", headers=op_h,
+                    json={"data": {**card, "so_cccd": "001 201 123456"}})
+    check("tạo profile trùng số CCCD (có khoảng trắng) → 409", r.status_code == 409, str(r.json()))
+    r = client.post("/api/v1/profiles", headers=op_h,
+                    json={"data": {**card, "so_cccd": "001.201.123456"}})
+    check("tạo profile trùng số CCCD (có dấu chấm) → 409", r.status_code == 409, str(r.json()))
+    r = client.post("/api/v1/profiles", headers=op_h, json={"data": {}})
+    check("tạo profile data rỗng → 400", r.status_code == 400, str(r.json()))
+
+    r = client.get("/api/v1/profiles", headers=op_h)
+    ids = [p["id"] for p in r.json().get("profiles", [])]
+    check("GET /profiles có 2 profile theo created_at ASC", ids == [p1.get("id"), p2.get("id")], str(ids))
+
+    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=op_h, json={"data": prof1})
+    check("sửa profile 2 thành số CCCD của profile 1 → 409", r.status_code == 409, str(r.json()))
+    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=op_h,
+                   json={"data": {**prof2, "ho_va_ten": "TRẦN THỊ C"}})
+    check("sửa profile hợp lệ → 200", r.status_code == 200
+          and r.json().get("data", {}).get("ho_va_ten") == "TRẦN THỊ C", str(r.json()))
+
+    r = client.post(f"/api/v1/profiles/{p2.get('id')}/default", headers=op_h)
+    check("endpoint đặt mặc định đã bỏ → 404/405", r.status_code in (404, 405), str(r.status_code))
+
+    r = client.put(f"/api/v1/profiles/{p1.get('id')}", headers=admin_h, json={"data": prof1})
+    check("admin sửa profile của operator1 → 404", r.status_code == 404, str(r.json()))
+    r = client.delete(f"/api/v1/profiles/{p1.get('id')}", headers=admin_h)
+    check("admin xoá profile của operator1 → 404", r.status_code == 404, str(r.json()))
+
+    r = client.delete(f"/api/v1/profiles/{p2.get('id')}", headers=op_h)
+    check("xoá profile 2 → 200", r.status_code == 200, str(r.json()))
+    r = client.get("/api/v1/profiles", headers=op_h)
+    ids = [p["id"] for p in r.json().get("profiles", [])]
+    check("sau khi xoá chỉ còn profile 1", ids == [p1.get("id")], str(ids))
+    r = client.delete("/api/v1/profiles/abc", headers=op_h)
+    check("xoá id không hợp lệ → 404", r.status_code == 404, str(r.json()))
+
     print("== P2: Đổi mật khẩu (không OTP) ==")
     r = client.post("/api/v1/auth/change-password",
                     headers={"Authorization": f"Bearer {operator1_access}"},
@@ -384,6 +436,7 @@ def _run(client: TestClient) -> None:
                                   "record.create", "record.review",
                                   "auth.change_password"} <= actions,
           str(sorted(actions)))
+    check("có sự kiện profile.create", "profile.create" in actions, str(sorted(actions)))
 
     print(f"\n== KẾT QUẢ: {PASS} PASS / {FAIL} FAIL ==")
     sys.exit(1 if FAIL else 0)

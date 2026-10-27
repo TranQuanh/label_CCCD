@@ -16,6 +16,7 @@ Quy tắc bảo mật (khớp tài liệu):
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -329,6 +330,54 @@ def me(user: dict = Depends(get_current_user)) -> dict:
         "email": user["email"],
         "role": user["role"],
     }
+
+
+@router.get("/profile")
+def get_profile(user: dict = Depends(get_current_user)) -> dict:
+    """Lấy thông tin profile CCCD đã lưu của user.
+
+    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
+    """
+    row = db.fetch_one("SELECT cccd_profile FROM tblUser WHERE id = %s", (user["id"],))
+    prof = row.get("cccd_profile") if row else None
+    if isinstance(prof, str):
+        try:
+            prof = json.loads(prof)
+        except Exception:
+            pass
+    return {"profile": prof}
+
+
+@router.put("/profile")
+def update_profile(body: dict, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Cập nhật thông tin profile CCCD của user.
+
+    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
+    """
+    ip, device = _client_meta(request)
+    data = body.get("profile", body)
+    prof_json = json.dumps(data) if data else None
+    db.execute(
+        "UPDATE tblUser SET cccd_profile = %s, updated_at = NOW() WHERE id = %s",
+        (prof_json, user["id"]),
+    )
+    audit(user["id"], "profile.update", "user", user["id"], None, ip, device)
+    return {"message": "Cập nhật profile thành công", "profile": data}
+
+
+@router.delete("/profile")
+def delete_profile(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    """Xóa thông tin profile CCCD của user.
+
+    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
+    """
+    ip, device = _client_meta(request)
+    db.execute(
+        "UPDATE tblUser SET cccd_profile = NULL, updated_at = NOW() WHERE id = %s",
+        (user["id"],),
+    )
+    audit(user["id"], "profile.delete", "user", user["id"], None, ip, device)
+    return {"message": "Đã xóa profile thành công"}
 
 
 @router.post("/change-password")
