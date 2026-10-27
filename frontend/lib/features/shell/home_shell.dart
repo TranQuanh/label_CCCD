@@ -1,11 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../data/session/session_store.dart';
 import '../account/account_tab.dart';
 import '../forms/forms_tab.dart';
+import '../profile/profile_tab.dart';
 import '../records/records_tab.dart';
 
-/// Khung chính với 3 tab: Biểu mẫu · Hồ sơ · Tài khoản.
+/// Khung chính với 4 tab: Biểu mẫu · Hồ sơ · Profile · Tài khoản.
+///
+/// `IndexedStack` dựng sẵn mọi tab nên lịch sử được nạp lại mỗi khi
+/// chuyển tab (không phải chỉ lần đầu mở app).
 class HomeShell extends StatefulWidget {
   final int initialIndex;
   const HomeShell({super.key, this.initialIndex = 0});
@@ -17,7 +24,10 @@ class HomeShell extends StatefulWidget {
 class HomeShellState extends State<HomeShell> {
   late int _index = widget.initialIndex;
 
-  void goToTab(int i) => setState(() => _index = i);
+  void goToTab(int i) {
+    setState(() => _index = i);
+    if (i == 2) unawaited(sessionStore.loadRecords());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +37,7 @@ class HomeShellState extends State<HomeShell> {
         index: _index,
         children: [
           const FormsTab(),
+          ProfileTab(onUseInForms: () => goToTab(0)),
           RecordsTab(onCreateNew: () => goToTab(0)),
           const AccountTab(),
         ],
@@ -44,8 +55,9 @@ class HomeShellState extends State<HomeShell> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _tab(0, Icons.assignment_outlined, Icons.assignment, 'Biểu mẫu'),
-                _tab(1, Icons.folder_outlined, Icons.folder, 'Hồ sơ'),
-                _tab(2, Icons.person_outline, Icons.person, 'Tài khoản'),
+                _tab(1, Icons.badge, Icons.badge, 'Profile'),
+                _tab(2, Icons.folder_outlined, Icons.folder, 'Hồ sơ'),
+                _tab(3, Icons.person_outline, Icons.person, 'Tài khoản'),
               ],
             ),
           ),

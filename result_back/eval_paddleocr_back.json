@@ -1,0 +1,52 @@
+{
+  "field_accuracy": 0.486,
+  "cer": 0.1677,
+  "f1": 0.4215,
+  "precision": 0.4096,
+  "recall": 0.4341,
+  "n_samples": 161,
+  "n_fields": 644,
+  "per_field_accuracy": {
+    "dac_diem_nhan_dang": 0.0,
+    "ngay_cap": 0.9441,
+    "noi_cap": 0.0,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "paddleocr",
+    "model_id": "PaddleOCR PP-OCR (det+rec, lang=vi)",
+    "family": "ocr",
+    "params_b": null,
+    "mode": "rule_based",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "det_limit_side_len": 1024,
+    "decoding": "rule-based field parser (không sinh token)",
+    "canonicalize": false,
+    "detector": "ppocr_db",
+    "recognizer": "ppocr_crnn",
+    "engine_config": {
+      "engine": "PaddleOCR (det+rec, lang=vi)",
+      "detector": "PP-OCR DB",
+      "recognizer": "PP-OCR CRNN (lang=vi)",
+      "det_limit_side_len": 1024,
+      "device": "cpu",
+      "min_conf": 0.0
+    },
+    "ocr_cache": null,
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "field_fill_rate": 0.9674,
+  "ocr_lines_per_image": 15.2,
+  "latency_ms": {
+    "p50": 35232.4,
+    "p95": 36521.2,
+    "mean": 34410.1
+  },
+  "ocr_latency_ms": {
+    "mean": 34380.2
+  }
+}

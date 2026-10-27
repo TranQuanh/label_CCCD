@@ -3,50 +3,64 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/form_type.dart';
 import '../../data/session/session_store.dart';
-import '../scan/onboarding_screen.dart';
+import 'form_preview_screen.dart';
 
 /// Tab 1 — Danh mục biểu mẫu.
-///
-/// Bọc `AnimatedBuilder` như hai tab còn lại: bản cũ đọc thẳng `appStore` mà không
-/// lắng nghe nên lời chào không đổi khi đăng nhập tài khoản khác.
-class FormsTab extends StatelessWidget {
+class FormsTab extends StatefulWidget {
   const FormsTab({super.key});
+
+  @override
+  State<FormsTab> createState() => _FormsTabState();
+}
+
+class _FormsTabState extends State<FormsTab> {
+  @override
+  void initState() {
+    super.initState();
+    sessionStore.loadForms();
+  }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: sessionStore,
-      builder: (context, _) => Column(
-        children: [
-          _header(context),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text('Danh mục biểu mẫu',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.ink)),
-                    Text('${kFormTypes.length} biểu mẫu',
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.muted)),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                ...kFormTypes.map((f) => Padding(
-                      padding: const EdgeInsets.only(bottom: 11),
-                      child: _FormCard(form: f),
-                    )),
-              ],
+      builder: (context, _) {
+        final forms = sessionStore.forms;
+        return Column(
+          children: [
+            _header(context),
+            Expanded(
+              child: forms.isEmpty && sessionStore.loadingForms
+                  ? const Center(
+                      child: CircularProgressIndicator(color: AppColors.navy))
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            const Text('Danh mục biểu mẫu',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.ink)),
+                            Text('${forms.length} biểu mẫu',
+                                style: const TextStyle(
+                                    fontSize: 12, color: AppColors.muted)),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        ...forms.map((f) => Padding(
+                              padding: const EdgeInsets.only(bottom: 11),
+                              child: _FormCard(form: f),
+                            )),
+                      ],
+                    ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 
@@ -81,7 +95,7 @@ class FormsTab extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(.12),
+                    color: Colors.white.withValues(alpha: .12),
                     border: Border.all(color: Colors.white24, width: 1.5),
                   ),
                   child: Text(sessionStore.initial,
@@ -95,9 +109,9 @@ class FormsTab extends StatelessWidget {
               padding:
                   const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(.08),
+                color: Colors.white.withValues(alpha: .08),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white.withOpacity(.14)),
+                border: Border.all(color: Colors.white.withValues(alpha: .14)),
               ),
               child: Row(children: [
                 Container(
@@ -140,22 +154,20 @@ class _FormCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.card),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
-            builder: (_) => OnboardingScreen(formType: form)),
+            builder: (_) => FormPreviewScreen(formType: form)),
       ),
       child: Container(
         padding: const EdgeInsets.all(15),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(AppRadius.card),
-          border: Border(
-            top: const BorderSide(color: AppColors.lineSoft),
-            right: const BorderSide(color: AppColors.lineSoft),
-            bottom: const BorderSide(color: AppColors.lineSoft),
-            left: BorderSide(color: form.color, width: 4),
+          border: Border.all(
+            color: AppColors.lineSoft,
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(
-                color: AppColors.navy.withOpacity(.05),
+                color: AppColors.navy.withValues(alpha: .05),
                 blurRadius: 12,
                 offset: const Offset(0, 5)),
           ],

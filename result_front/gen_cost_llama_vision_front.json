@@ -1,0 +1,45 @@
+{
+  "model_key": "llama_vision",
+  "side": "Front",
+  "n_probe": 12,
+  "max_new_tokens": 512,
+  "prompt_len_mismatch": 0,
+  "configs": [
+    {
+      "label": "zero-shot",
+      "prefill_p50_ms": 374.6,
+      "total_p50_ms": 8937.3,
+      "tokens_p50": 130.5,
+      "decode_ms_per_token_p50": 66.09,
+      "seq_len": 550,
+      "n_images": 12
+    },
+    {
+      "label": "LoRA gắn rời",
+      "prefill_p50_ms": 454.9,
+      "total_p50_ms": 18791.4,
+      "tokens_p50": 132.0,
+      "decode_ms_per_token_p50": 139.56,
+      "seq_len": 550,
+      "n_images": 12
+    },
+    {
+      "label": "LoRA tắt tạm",
+      "prefill_p50_ms": 379.5,
+      "total_p50_ms": 9491.0,
+      "tokens_p50": 130.5,
+      "decode_ms_per_token_p50": 70.23,
+      "seq_len": 550,
+      "n_images": 12
+    },
+    {
+      "label": "LoRA đã merge",
+      "prefill_p50_ms": 376.7,
+      "total_p50_ms": 9090.7,
+      "tokens_p50": 131.0,
+      "decode_ms_per_token_p50": 67.34,
+      "seq_len": 550,
+      "n_images": 12
+    }
+  ]
+}

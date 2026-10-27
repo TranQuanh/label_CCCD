@@ -6,9 +6,25 @@ import '../../core/theme/app_theme.dart';
 import '../output/preview_screen.dart';
 
 /// Tab 2 — Hồ sơ người dùng đã tạo.
-class RecordsTab extends StatelessWidget {
+///
+/// P2: ở chế độ thật, lịch sử tải từ server (`GET /scan-records`) khi mở tab.
+/// Viewer thấy bản che số CCCD (banner "dữ liệu đã được che").
+class RecordsTab extends StatefulWidget {
   final VoidCallback onCreateNew;
   const RecordsTab({super.key, required this.onCreateNew});
+
+  @override
+  State<RecordsTab> createState() => _RecordsTabState();
+}
+
+class _RecordsTabState extends State<RecordsTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      sessionStore.loadRecords();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,9 +56,9 @@ class RecordsTab extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 9),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(.08),
+                      color: Colors.white.withValues(alpha: .08),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white.withOpacity(.14)),
+                      border: Border.all(color: Colors.white.withValues(alpha: .14)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -66,7 +82,10 @@ class RecordsTab extends StatelessWidget {
             ),
             Expanded(
               child: records.isEmpty
-                  ? _empty()
+                  ? (sessionStore.loadingRecords
+                      ? const Center(
+                          child: CircularProgressIndicator(color: AppColors.navy))
+                      : _empty())
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
                       children: records
@@ -114,7 +133,7 @@ class RecordsTab extends StatelessWidget {
                       fontSize: 12.5, color: AppColors.hint, height: 1.5)),
               const SizedBox(height: 18),
               ElevatedButton(
-                onPressed: onCreateNew,
+                onPressed: widget.onCreateNew,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.navy,
                   foregroundColor: Colors.white,
@@ -140,7 +159,8 @@ class _RecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final form = formTypeById(record.formId);
+    final form = sessionStore.formById(record.formId) ??
+        formTypeById(record.formId);
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.card),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
@@ -150,6 +170,7 @@ class _RecordCard extends StatelessWidget {
           supp: record.supp,
           code: record.code,
           readOnly: true,
+          record: record,
         ),
       )),
       child: Container(
@@ -160,7 +181,7 @@ class _RecordCard extends StatelessWidget {
           border: Border.all(color: AppColors.lineSoft),
           boxShadow: [
             BoxShadow(
-                color: AppColors.navy.withOpacity(.05),
+                color: AppColors.navy.withValues(alpha: .05),
                 blurRadius: 12,
                 offset: const Offset(0, 5)),
           ],
@@ -188,6 +209,7 @@ class _RecordCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(form.title,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,

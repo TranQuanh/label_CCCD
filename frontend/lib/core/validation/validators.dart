@@ -22,6 +22,22 @@ class Validators {
 
   static bool email(String v) => _email.hasMatch(v.trim());
 
+  /// Mật khẩu tối thiểu 8 ký tự, có cả chữ và số (khớp backend P1:
+  /// `validate_password` trong `backend/security.py`).
+  static bool strongPassword(String v) {
+    if (v.length < 8) return false;
+    if (!v.contains(RegExp(r'[A-Za-z]'))) return false;
+    if (!v.contains(RegExp(r'[0-9]'))) return false;
+    return true;
+  }
+
+  /// Tên đăng nhập: 3–32 ký tự, chữ/số/`_`, không bắt đầu bằng số.
+  static bool username(String v) {
+    final t = v.trim();
+    if (t.length < 3 || t.length > 32) return false;
+    return RegExp(r'^[A-Za-z][A-Za-z0-9_]*$').hasMatch(t);
+  }
+
   /// Chỉ giữ chữ số — số CCCD hiển thị có thể có khoảng trắng phân nhóm.
   static String digitsOnly(String v) => v.replaceAll(_nonDigit, '');
 

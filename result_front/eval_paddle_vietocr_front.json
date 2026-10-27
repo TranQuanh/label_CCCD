@@ -1,0 +1,59 @@
+{
+  "field_accuracy": 0.5147,
+  "cer": 0.5644,
+  "f1": 0.647,
+  "precision": 0.6602,
+  "recall": 0.6344,
+  "n_samples": 144,
+  "n_fields": 1296,
+  "per_field_accuracy": {
+    "so_cccd": 0.8958,
+    "ho_va_ten": 0.2083,
+    "ngay_sinh": 0.5486,
+    "gioi_tinh": 0.6597,
+    "quoc_tich": 0.4792,
+    "que_quan": 0.2917,
+    "noi_thuong_tru": 0.1597,
+    "co_gia_tri_den": 0.3889,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "paddle_vietocr",
+    "model_id": "PP-OCR det + VietOCR rec (vgg_transformer)",
+    "family": "ocr",
+    "params_b": null,
+    "mode": "rule_based",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "det_limit_side_len": 1024,
+    "decoding": "rule-based field parser (không sinh token)",
+    "canonicalize": false,
+    "detector": "ppocr_db",
+    "recognizer": "vietocr",
+    "engine_config": {
+      "engine": "PP-OCR det + VietOCR vgg_transformer",
+      "detector": "PP-OCR DB",
+      "recognizer": "VietOCR vgg_transformer",
+      "det_limit_side_len": 1024,
+      "device": "cuda:0",
+      "det_device": "cpu",
+      "min_conf": 0.0
+    },
+    "ocr_cache": null,
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "field_fill_rate": 0.7199,
+  "ocr_lines_per_image": 16.2,
+  "latency_ms": {
+    "p50": 7899.1,
+    "p95": 9721.2,
+    "mean": 7974.0
+  },
+  "ocr_latency_ms": {
+    "mean": 7903.8
+  },
+  "n_from_cache": 0
+}

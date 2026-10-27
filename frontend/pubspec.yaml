@@ -17,6 +17,8 @@ dependencies:
   # Xuất biểu mẫu PDF
   pdf: ^3.10.7
   printing: ^5.12.0
+  # Lưu token xác thực an toàn (Keychain/Keystore)
+  flutter_secure_storage: ^9.2.2
 
 dev_dependencies:
   flutter_lints: ^3.0.0

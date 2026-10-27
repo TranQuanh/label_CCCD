@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -12,8 +14,16 @@ import 'processing_screen.dart';
 /// Ảnh chụp được ghi ra thư mục tạm của hệ điều hành và bị xoá ngay sau khi
 /// backend trích xuất xong (xem `ExtractionRepository`).
 class CameraScreen extends StatefulWidget {
-  final FormType formType;
-  const CameraScreen({super.key, required this.formType});
+  final FormType? formType;
+  final bool isProfileScan;
+  final bool isForNewProfile;
+
+  const CameraScreen({
+    super.key,
+    this.formType,
+    this.isProfileScan = false,
+    this.isForNewProfile = false,
+  });
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -41,27 +51,69 @@ class _CameraScreenState extends State<CameraScreen> {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         if (mounted) {
-          setState(() => _error = 'Không tìm thấy camera trên thiết bị.');
+          setState(() => _error = 'Không tìm thấy camera, tự động chuyển sang thư viện ảnh.');
+          unawaited(_pickFromGallery());
         }
         return;
       }
-      final back = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
+
+      // Try to find a back camera, fall back to any camera
+      CameraDescription? selectedCamera;
+
+      // First try to find back camera
+      for (final camera in cameras) {
+        if (camera.lensDirection == CameraLensDirection.back) {
+          selectedCamera = camera;
+          break;
+        }
+      }
+
+      // If no back camera, use first available
+      if (selectedCamera == null && cameras.isNotEmpty) {
+        selectedCamera = cameras.first;
+      }
+
+      if (selectedCamera == null) {
+        if (mounted) {
+          setState(() => _error = 'Không thể truy cập camera.');
+          unawaited(_pickFromGallery());
+        }
+        return;
+      }
+
+      // Use a resolution that's more compatible with emulators
       final ctrl =
-          CameraController(back, ResolutionPreset.high, enableAudio: false);
-      await ctrl.initialize();
+          CameraController(selectedCamera, ResolutionPreset.high, enableAudio: false);
+
+      // Initialize with timeout to prevent hanging
+      await ctrl.initialize().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw Exception('Camera initialization timeout'),
+      );
+
       if (!mounted) {
         await ctrl.dispose();
         return;
       }
+
+      // Small delay to let camera stabilize
+      await Future.delayed(const Duration(milliseconds: 500));
+
       setState(() {
         _controller = ctrl;
         _ready = true;
+        _error = null; // Clear any previous error
       });
+    } on TimeoutException catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Khởi tạo camera hết thời gian. Vui lòng thử lại hoặc sử dụng thư viện ảnh.');
+        unawaited(_pickFromGallery());
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = 'Không mở được camera: $e');
+      if (mounted) {
+        setState(() => _error = 'Không mở được camera: $e\nTự động chuyển sang thư viện ảnh.');
+        unawaited(_pickFromGallery());
+      }
     }
   }
 
@@ -125,6 +177,8 @@ class _CameraScreenState extends State<CameraScreen> {
     Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
       builder: (_) => ProcessingScreen(
         formType: widget.formType,
+        isProfileScan: widget.isProfileScan,
+        isForNewProfile: widget.isForNewProfile,
         frontPath: _frontPath,
         backPath: path,
       ),
@@ -134,6 +188,31 @@ class _CameraScreenState extends State<CameraScreen> {
   void _toast(String msg) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(msg)));
 
+  /// Nút quay lại: đang ở mặt sau → về bước chụp mặt trước (chụp lại);
+  /// đang ở mặt trước → thoát màn camera.
+  void _goBack() {
+    if (_busy) return;
+    if (_isBack) {
+      setState(() {
+        _isBack = false;
+        _frontPath = null;
+      });
+      return;
+    }
+    Navigator.of(context).maybePop();
+  }
+
+  /// Nút quay lại góc trên trái — dùng chung cho mọi trạng thái màn camera.
+  Widget _backButton() => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: _circle(
+            const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+            _goBack,
+          ),
+        ),
+      );
+
   @override
   void dispose() {
     _controller?.dispose();
@@ -142,15 +221,34 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Nút Back hệ thống ở bước mặt sau → về bước mặt trước thay vì thoát.
+    return PopScope(
+      canPop: !_isBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: _error != null
-          ? _errorView()
+          ? Stack(children: [_errorView(), _backButton()])
           : !_ready
-              ? const Center(
-                  child: CircularProgressIndicator(color: AppColors.star))
+              ? Stack(children: [
+                  const Center(
+                      child: CircularProgressIndicator(color: AppColors.star)),
+                  _backButton(),
+                ])
               : Stack(children: [
-                  Positioned.fill(child: CameraPreview(_controller!)),
+                  Positioned.fill(
+                    child: _controller != null
+                        ? CameraPreview(_controller!)
+                        : const Center(
+                            child: Icon(
+                              Icons.videocam,
+                              size: 64,
+                              color: Colors.white38,
+                            ),
+                          ),
+                  ),
                   Positioned.fill(
                     child: ScannerOverlay(
                       hint: _busy
@@ -165,6 +263,7 @@ class _CameraScreenState extends State<CameraScreen> {
                   _topBar(),
                   _bottomControls(),
                 ]),
+      ),
     );
   }
 
@@ -212,8 +311,8 @@ class _CameraScreenState extends State<CameraScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _circle(const Icon(Icons.close, color: Colors.white, size: 20),
-                  () => Navigator.of(context).maybePop()),
+              _circle(const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                  _goBack),
               Column(children: [
                 Text(_isBack ? 'Mặt sau CCCD' : 'Mặt trước CCCD',
                     style: const TextStyle(
@@ -244,7 +343,7 @@ class _CameraScreenState extends State<CameraScreen> {
           height: 36,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(.4),
+            color: Colors.black.withValues(alpha: .4),
             shape: BoxShape.circle,
           ),
           child: icon,
@@ -270,7 +369,7 @@ class _CameraScreenState extends State<CameraScreen> {
                         height: 52,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(.12),
+                          color: Colors.white.withValues(alpha: .12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.white24),
                         ),
