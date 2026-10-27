@@ -1,0 +1,11 @@
+{
+  "ham_threshold": 6,
+  "n_images": 1602,
+  "n_clusters": 481,
+  "n_clusters_spanning_splits": 5,
+  "test_share_template_with_train": 122,
+  "test_share_gold_with_train": 4,
+  "test_share_id_field_with_train": 76,
+  "id_field": "ngay_cap",
+  "n_test": 161
+}

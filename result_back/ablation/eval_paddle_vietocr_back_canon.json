@@ -1,0 +1,48 @@
+{
+  "field_accuracy": 0.7935,
+  "cer": 0.0796,
+  "f1": 0.9053,
+  "precision": 0.909,
+  "recall": 0.9016,
+  "n_samples": 161,
+  "n_fields": 644,
+  "per_field_accuracy": {
+    "dac_diem_nhan_dang": 0.3292,
+    "ngay_cap": 0.9565,
+    "noi_cap": 0.8882,
+    "mat_the": 1.0
+  },
+  "run": {
+    "model_key": "paddle_vietocr",
+    "model_id": "PP-OCR det + VietOCR rec (vgg_transformer)",
+    "family": "ocr",
+    "params_b": null,
+    "mode": "rule_based",
+    "adapter_dir": null,
+    "image_max_side": 1024,
+    "det_limit_side_len": 1024,
+    "decoding": "rule-based field parser (không sinh token)",
+    "canonicalize": true,
+    "detector": "ppocr_db",
+    "recognizer": "vietocr",
+    "engine_config": {
+      "engine": "PP-OCR det + VietOCR rec (vgg_transformer)",
+      "from_cache": true
+    },
+    "ocr_cache": "/content/drive/MyDrive/cccd_project/Data/result/back/eval_paddle_vietocr_back_ocr.jsonl",
+    "trainable_params_pct": null,
+    "train_max_length": null
+  },
+  "json_parse_rate": 1.0,
+  "n_errors": 0,
+  "field_fill_rate": 0.9767,
+  "ocr_lines_per_image": 15.5,
+  "latency_ms": {
+    "p50": 40.6,
+    "p95": 153.0,
+    "mean": 56.2
+  },
+  "ocr_latency_ms": {
+    "mean": 0.0
+  }
+}

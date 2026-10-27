@@ -1,21 +1,197 @@
-"""
-Shim tương thích ngược — KHÔNG chứa mã nguồn.
+"""Re-score `*_preds.jsonl` on CPU, and re-run only the images that failed."""
 
-Script thật nằm ở **model/scripts/** (cùng tên file) — sửa code ở đó.
-File này chỉ chuyển tiếp nguyên vẹn tham số dòng lệnh, để lệnh cũ vẫn chạy:
+from __future__ import annotations
 
-    python scripts/rescore.py rescore --preds ... --report ...
-
-Notebook Colab 02–05 gọi theo đường `scripts/*.py` nên không phải sửa gì.
-"""
-
-import runpy
+import argparse
+import json
+import logging
 import sys
 from pathlib import Path
+from typing import Dict, List
 
-_real = Path(__file__).resolve().parent.parent / "model" / "scripts" / Path(__file__).name
-if not _real.exists():
-    raise SystemExit(f"Không tìm thấy script thật: {_real}")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-sys.argv[0] = str(_real)
-runpy.run_path(str(_real), run_name="__main__")
+from src.utils.metrics import evaluate, safe_parse
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def read_jsonl(path: Path) -> List[dict]:
+    with open(path, "r", encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def write_jsonl(path: Path, rows: List[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def key_of(record: dict) -> str:
+    """Match by file name: preds hold absolute Colab paths, test.jsonl may hold basenames."""
+    return Path(str(record.get("image", ""))).name
+
+
+def cmd_missing(args: argparse.Namespace) -> None:
+    preds = read_jsonl(Path(args.preds))
+    test = read_jsonl(Path(args.test_jsonl))
+
+    # Rows that still have `raw` can be rescored offline, so they are excluded.
+    need = {
+        key_of(p)
+        for p in preds
+        if not p.get("pred") and not str(p.get("raw", "")).strip()
+    }
+    has_raw = sum(1 for p in preds if str(p.get("raw", "")).strip())
+
+    selected = [rec for rec in test if key_of(rec) in need]
+    write_jsonl(Path(args.out), selected)
+
+    logger.info("Tổng preds        : %d", len(preds))
+    logger.info("Có sẵn `raw`      : %d  → chấm lại offline được, không cần GPU", has_raw)
+    logger.info("Pred rỗng, mất raw: %d  → phải sinh lại", len(need))
+    logger.info("Khớp trong test   : %d  → đã ghi %s", len(selected), args.out)
+    if len(selected) != len(need):
+        logger.warning(
+            "⚠ %d ảnh cần chạy lại nhưng KHÔNG tìm thấy trong test_jsonl "
+            "(sai --test_jsonl, hoặc lệch mặt thẻ Front/Back?)",
+            len(need) - len(selected),
+        )
+    if not selected:
+        logger.info("✅ Không có ảnh nào phải chạy lại bằng GPU.")
+
+
+def cmd_merge(args: argparse.Namespace) -> None:
+    base = read_jsonl(Path(args.base))
+    patch = {key_of(r): r for r in read_jsonl(Path(args.patch))}
+
+    merged: List[dict] = []
+    n_replaced = 0
+    for row in base:
+        new = patch.get(key_of(row))
+        if new is None:
+            merged.append(row)
+            continue
+        # `gold` comes from the dataset, so a mismatch means the mini set used other labels.
+        if new.get("gold") and row.get("gold") and new["gold"] != row["gold"]:
+            raise SystemExit(
+                f"❌ Gold lệch nhau ở {key_of(row)} — mini set dựng từ nhãn khác "
+                f"với lần chạy gốc. Kiểm tra lại --test_jsonl trước khi ghép."
+            )
+        merged.append({**row, **{k: v for k, v in new.items() if k != "gold"}})
+        n_replaced += 1
+
+    unmatched = set(patch) - {key_of(r) for r in base}
+    write_jsonl(Path(args.out), merged)
+
+    logger.info("Dòng gốc     : %d", len(base))
+    logger.info("Đã thay thế  : %d", n_replaced)
+    if unmatched:
+        logger.warning("⚠ %d dòng trong --patch không có trong --base, đã BỎ QUA: %s",
+                       len(unmatched), sorted(unmatched)[:5])
+    logger.info("💾 Đã ghi → %s", args.out)
+
+
+def cmd_rescore(args: argparse.Namespace) -> None:
+    rows = read_jsonl(Path(args.preds))
+
+    preds: List[dict] = []
+    golds: List[dict] = []
+    n_parse_ok = 0
+    n_from_raw = 0
+    n_errors = 0
+
+    for row in rows:
+        gold = row.get("gold") or {}
+        raw = row.get("raw")
+        if isinstance(raw, str) and raw.strip():
+            # Re-parsing `raw` is what makes a parser fix measurable without a GPU.
+            if raw.startswith("<EXCEPTION>"):
+                pred = {}
+                n_errors += 1
+            else:
+                pred = safe_parse(raw)
+                n_from_raw += 1
+        else:
+            pred = row.get("pred") or {}
+        if pred:
+            n_parse_ok += 1
+        preds.append(pred)
+        golds.append(gold)
+
+    result = evaluate(preds, golds)
+    report: Dict[str, object] = result.as_dict()
+
+    # Parser-independent numbers are carried over from the old report.
+    if args.report:
+        old = json.loads(Path(args.report).read_text(encoding="utf-8"))
+        for key in ("run", "latency_ms", "peak_vram_mb"):
+            if key in old:
+                report[key] = old[key]
+        old_fa = old.get("field_accuracy")
+        old_parse = old.get("json_parse_rate")
+    else:
+        old_fa = old_parse = None
+
+    report["json_parse_rate"] = round(n_parse_ok / len(rows), 4) if rows else 0.0
+    report["n_errors"] = n_errors
+    report["rescored"] = {
+        "n_parsed_from_raw": n_from_raw,
+        "n_from_stored_pred": len(rows) - n_from_raw - n_errors,
+    }
+
+    out = Path(args.out or args.preds).with_suffix(".json") if not args.out else Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    logger.info("Số ảnh            : %d  (parse lại từ raw: %d)", len(rows), n_from_raw)
+    if old_parse is not None:
+        logger.info("JSON parse rate   : %.2f%%  →  %.2f%%",
+                    old_parse * 100, report["json_parse_rate"] * 100)
+    else:
+        logger.info("JSON parse rate   : %.2f%%", report["json_parse_rate"] * 100)
+    if old_fa is not None:
+        logger.info("Field Accuracy    : %.2f%%  →  %.2f%%  (%+.2f điểm)",
+                    old_fa * 100, result.field_accuracy * 100,
+                    (result.field_accuracy - old_fa) * 100)
+    else:
+        logger.info("Field Accuracy    : %.2f%%", result.field_accuracy * 100)
+    logger.info("CER / F1          : %.4f / %.2f%%", result.cer, result.f1 * 100)
+    logger.info("💾 Đã ghi → %s", out)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Chấm lại điểm từ *_preds.jsonl mà không cần GPU",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(dest="mode", required=True)
+
+    m = sub.add_parser("missing", help="Lọc mini test set gồm ảnh phải sinh lại")
+    m.add_argument("--preds", required=True)
+    m.add_argument("--test_jsonl", required=True)
+    m.add_argument("--out", required=True)
+    m.set_defaults(func=cmd_missing)
+
+    g = sub.add_parser("merge", help="Ghép preds mới đè lên preds cũ")
+    g.add_argument("--base", required=True)
+    g.add_argument("--patch", required=True)
+    g.add_argument("--out", required=True)
+    g.set_defaults(func=cmd_merge)
+
+    r = sub.add_parser("rescore", help="Tính lại FA/CER/F1 từ preds")
+    r.add_argument("--preds", required=True)
+    r.add_argument("--report", default=None, help="Report cũ, để lấy latency/VRAM/run")
+    r.add_argument("--out", default=None, help="Mặc định ghi đè --report")
+    r.set_defaults(func=cmd_rescore)
+
+    return p
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
+    if args.mode == "rescore" and not args.out and args.report:
+        args.out = args.report
+    args.func(args)

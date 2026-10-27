@@ -13,6 +13,9 @@
         "p95": 18736.6,
         "mean": 16770.6
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
         "so_cccd": 0.9931,
         "ho_va_ten": 0.8889,
@@ -40,28 +43,31 @@
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_internvl_ft_front.json"
     },
     "zero_shot": {
-      "field_accuracy": 0.0448,
-      "cer": 0.9552,
-      "f1": 0.0,
-      "precision": 0.0,
-      "recall": 0.0,
-      "json_parse_rate": 0.0,
+      "field_accuracy": 0.6111,
+      "cer": 0.7765,
+      "f1": 0.6673,
+      "precision": 0.6092,
+      "recall": 0.7378,
+      "json_parse_rate": 1.0,
       "peak_vram_mb": 2449.6,
       "latency_ms": {
-        "p50": 10490.9,
-        "p95": 12031.9,
-        "mean": 10564.4
+        "p50": 10337.7,
+        "p95": 11772.4,
+        "mean": 10382.9
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
-        "so_cccd": 0.0,
-        "ho_va_ten": 0.0,
-        "ngay_sinh": 0.0,
-        "gioi_tinh": 0.0,
-        "quoc_tich": 0.0,
-        "que_quan": 0.1319,
-        "noi_thuong_tru": 0.1319,
-        "co_gia_tri_den": 0.1389,
-        "mat_the": 0.0
+        "so_cccd": 0.9861,
+        "ho_va_ten": 0.1667,
+        "ngay_sinh": 0.9792,
+        "gioi_tinh": 0.9861,
+        "quoc_tich": 0.9931,
+        "que_quan": 0.3333,
+        "noi_thuong_tru": 0.2083,
+        "co_gia_tri_den": 0.8125,
+        "mat_the": 0.0347
       },
       "run": {
         "model_key": "internvl",
@@ -78,7 +84,7 @@
       },
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_internvl_zeroshot_front.json"
     },
-    "delta_fa": 0.9004
+    "delta_fa": 0.3341
   },
   "llama_vision": {
     "fine_tuned": {
@@ -94,6 +100,9 @@
         "p95": 21365.3,
         "mean": 19419.7
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
         "so_cccd": 0.9861,
         "ho_va_ten": 0.9167,
@@ -121,28 +130,31 @@
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_llama_vision_ft_front.json"
     },
     "zero_shot": {
-      "field_accuracy": 0.4792,
-      "cer": 0.2976,
-      "f1": 0.5806,
-      "precision": 0.633,
-      "recall": 0.5363,
-      "json_parse_rate": 0.8542,
+      "field_accuracy": 0.4753,
+      "cer": 0.3042,
+      "f1": 0.5775,
+      "precision": 0.6312,
+      "recall": 0.5322,
+      "json_parse_rate": 0.8472,
       "peak_vram_mb": 7770.4,
       "latency_ms": {
-        "p50": 10499.3,
-        "p95": 11636.7,
-        "mean": 9643.4
+        "p50": 10265.8,
+        "p95": 11437.7,
+        "mean": 9256.6
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
-        "so_cccd": 0.7222,
-        "ho_va_ten": 0.2292,
-        "ngay_sinh": 0.8194,
-        "gioi_tinh": 0.8542,
-        "quoc_tich": 0.8472,
-        "que_quan": 0.2778,
+        "so_cccd": 0.7292,
+        "ho_va_ten": 0.2222,
+        "ngay_sinh": 0.8056,
+        "gioi_tinh": 0.8472,
+        "quoc_tich": 0.8403,
+        "que_quan": 0.2847,
         "noi_thuong_tru": 0.125,
-        "co_gia_tri_den": 0.4306,
-        "mat_the": 0.0069
+        "co_gia_tri_den": 0.4097,
+        "mat_the": 0.0139
       },
       "run": {
         "model_key": "llama_vision",
@@ -159,7 +171,120 @@
       },
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_llama_vision_zeroshot_front.json"
     },
-    "delta_fa": 0.4645
+    "delta_fa": 0.4684
+  },
+  "paddle_vietocr": {
+    "rule_based": {
+      "field_accuracy": 0.5147,
+      "cer": 0.5644,
+      "f1": 0.647,
+      "precision": 0.6602,
+      "recall": 0.6344,
+      "json_parse_rate": 1.0,
+      "peak_vram_mb": null,
+      "latency_ms": {
+        "p50": 7899.1,
+        "p95": 9721.2,
+        "mean": 7974.0
+      },
+      "field_fill_rate": 0.7199,
+      "ocr_lines_per_image": 16.2,
+      "engine_config": null,
+      "per_field_accuracy": {
+        "so_cccd": 0.8958,
+        "ho_va_ten": 0.2083,
+        "ngay_sinh": 0.5486,
+        "gioi_tinh": 0.6597,
+        "quoc_tich": 0.4792,
+        "que_quan": 0.2917,
+        "noi_thuong_tru": 0.1597,
+        "co_gia_tri_den": 0.3889,
+        "mat_the": 1.0
+      },
+      "run": {
+        "model_key": "paddle_vietocr",
+        "model_id": "PP-OCR det + VietOCR rec (vgg_transformer)",
+        "family": "ocr",
+        "params_b": null,
+        "mode": "rule_based",
+        "adapter_dir": null,
+        "image_max_side": 1024,
+        "det_limit_side_len": 1024,
+        "decoding": "rule-based field parser (không sinh token)",
+        "canonicalize": false,
+        "detector": "ppocr_db",
+        "recognizer": "vietocr",
+        "engine_config": {
+          "engine": "PP-OCR det + VietOCR vgg_transformer",
+          "detector": "PP-OCR DB",
+          "recognizer": "VietOCR vgg_transformer",
+          "det_limit_side_len": 1024,
+          "device": "cuda:0",
+          "det_device": "cpu",
+          "min_conf": 0.0
+        },
+        "ocr_cache": null,
+        "trainable_params_pct": null,
+        "train_max_length": null
+      },
+      "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_paddle_vietocr_front.json"
+    }
+  },
+  "paddleocr": {
+    "rule_based": {
+      "field_accuracy": 0.4028,
+      "cer": 0.5723,
+      "f1": 0.3767,
+      "precision": 0.3683,
+      "recall": 0.3854,
+      "json_parse_rate": 1.0,
+      "peak_vram_mb": null,
+      "latency_ms": {
+        "p50": 23376.8,
+        "p95": 33348.8,
+        "mean": 24729.6
+      },
+      "field_fill_rate": 0.7269,
+      "ocr_lines_per_image": 17.4,
+      "engine_config": null,
+      "per_field_accuracy": {
+        "so_cccd": 0.9444,
+        "ho_va_ten": 0.0139,
+        "ngay_sinh": 0.5764,
+        "gioi_tinh": 0.4861,
+        "quoc_tich": 0.0,
+        "que_quan": 0.1389,
+        "noi_thuong_tru": 0.1319,
+        "co_gia_tri_den": 0.3333,
+        "mat_the": 1.0
+      },
+      "run": {
+        "model_key": "paddleocr",
+        "model_id": "PaddleOCR PP-OCR (det+rec, lang=vi)",
+        "family": "ocr",
+        "params_b": null,
+        "mode": "rule_based",
+        "adapter_dir": null,
+        "image_max_side": 1024,
+        "det_limit_side_len": 1024,
+        "decoding": "rule-based field parser (không sinh token)",
+        "canonicalize": false,
+        "detector": "ppocr_db",
+        "recognizer": "ppocr_crnn",
+        "engine_config": {
+          "engine": "PaddleOCR (det+rec, lang=vi)",
+          "detector": "PP-OCR DB",
+          "recognizer": "PP-OCR CRNN (lang=vi)",
+          "det_limit_side_len": 1024,
+          "device": "cpu",
+          "min_conf": 0.0
+        },
+        "ocr_cache": null,
+        "trainable_params_pct": null,
+        "train_max_length": null
+      },
+      "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_paddleocr_front.json"
+    }
   },
   "qwen": {
     "fine_tuned": {
@@ -175,6 +300,9 @@
         "p95": 21712.8,
         "mean": 19473.3
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
         "so_cccd": 0.9861,
         "ho_va_ten": 0.8889,
@@ -202,27 +330,30 @@
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_qwen_ft_front.json"
     },
     "zero_shot": {
-      "field_accuracy": 0.0594,
-      "cer": 0.9355,
-      "f1": 0.0388,
-      "precision": 0.9186,
-      "recall": 0.0198,
-      "json_parse_rate": 0.0208,
+      "field_accuracy": 0.6188,
+      "cer": 0.166,
+      "f1": 0.778,
+      "precision": 0.7807,
+      "recall": 0.7754,
+      "json_parse_rate": 1.0,
       "peak_vram_mb": 2523.5,
       "latency_ms": {
-        "p50": 10636.8,
-        "p95": 11677.7,
-        "mean": 10646.7
+        "p50": 10275.8,
+        "p95": 11285.7,
+        "mean": 10300.9
       },
+      "field_fill_rate": null,
+      "ocr_lines_per_image": null,
+      "engine_config": null,
       "per_field_accuracy": {
-        "so_cccd": 0.0208,
-        "ho_va_ten": 0.0139,
-        "ngay_sinh": 0.0208,
-        "gioi_tinh": 0.0208,
-        "quoc_tich": 0.0208,
-        "que_quan": 0.1458,
-        "noi_thuong_tru": 0.1389,
-        "co_gia_tri_den": 0.1528,
+        "so_cccd": 0.9792,
+        "ho_va_ten": 0.5417,
+        "ngay_sinh": 0.9583,
+        "gioi_tinh": 0.9931,
+        "quoc_tich": 0.9931,
+        "que_quan": 0.5278,
+        "noi_thuong_tru": 0.1944,
+        "co_gia_tri_den": 0.3819,
         "mat_the": 0.0
       },
       "run": {
@@ -240,6 +371,6 @@
       },
       "source": "/content/drive/MyDrive/cccd_project/Data/result/front/eval_qwen_zeroshot_front.json"
     },
-    "delta_fa": 0.8781
+    "delta_fa": 0.3187
   }
 }
