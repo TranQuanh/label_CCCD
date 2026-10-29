@@ -207,14 +207,22 @@ def login(body: LoginBody, request: Request) -> dict:
         raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
 
     if not verify_password(body.password, user["password_hash"]):
-        fails = (user["failed_login_count"] or 0) + 1
+        # Dùng SQL atomic để tránh lost-update khi nhiều request đăng nhập song song.
         locked_until = None
+        row = db.fetch_one(
+            "UPDATE tblUser "
+            "SET failed_login_count = failed_login_count + 1 "
+            "WHERE id = %s "
+            "RETURNING failed_login_count, locked_until",
+            (user["id"],),
+        )
+        fails = row["failed_login_count"] if row else 1
         if fails >= config.MAX_LOGIN_FAILS:
             locked_until = _now_naive() + timedelta(minutes=config.LOCK_MINUTES)
-        db.execute(
-            "UPDATE tblUser SET failed_login_count = %s, locked_until = %s WHERE id = %s",
-            (fails, locked_until, user["id"]),
-        )
+            db.execute(
+                "UPDATE tblUser SET locked_until = %s WHERE id = %s",
+                (locked_until, user["id"]),
+            )
         audit(user["id"], "auth.login_failed", "user", user["id"],
               {"attempt": fails}, ip, device)
         if locked_until:

@@ -56,7 +56,11 @@ class _ProfileTabState extends State<ProfileTab> {
 
     if (ok == true) {
       try {
-        await sessionStore.removeProfileAt(index);
+        // Tìm lại vị trí SAU khi người dùng xác nhận: trong lúc hộp thoại mở,
+        // danh sách có thể đã nạp lại từ server → chỉ số cũ có thể trỏ nhầm.
+        final current = sessionStore.indexOfProfile(profile);
+        if (current < 0) return; // đã bị xoá ở nơi khác
+        await sessionStore.removeProfileAt(current);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Đã xóa Profile CCCD.')),
@@ -231,7 +235,6 @@ class _ProfileTabState extends State<ProfileTab> {
           animation: sessionStore,
           builder: (context, _) {
             final profiles = sessionStore.profiles;
-            final selectedIndex = sessionStore.selectedProfileIndex;
 
             if (profiles.isEmpty) {
               return Center(
@@ -273,7 +276,6 @@ class _ProfileTabState extends State<ProfileTab> {
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   final profile = profiles[index];
-                  final isSelected = index == selectedIndex;
 
                   // ListTile PHẢI có Material làm cha trực tiếp (không có widget
                   // tô màu nào xen giữa). Trước đây bọc trong Container có màu
@@ -281,17 +283,11 @@ class _ProfileTabState extends State<ProfileTab> {
                   // may be invisible". Nền, viền, bo góc giờ nằm trên Material.
                   final radius = BorderRadius.circular(16);
                   return Material(
-                    color: isSelected
-                        ? AppColors.cobalt.withValues(alpha: .08)
-                        : Colors.white,
+                    color: Colors.white,
                     clipBehavior: Clip.antiAlias,
                     shape: RoundedRectangleBorder(
                       borderRadius: radius,
-                      side: BorderSide(
-                        color: isSelected
-                            ? AppColors.cobalt.withValues(alpha: .3)
-                            : AppColors.lineSoft,
-                      ),
+                      side: const BorderSide(color: AppColors.lineSoft),
                     ),
                     child: ListTile(
                       shape: RoundedRectangleBorder(borderRadius: radius),

@@ -5,7 +5,6 @@ import '../../core/theme/app_theme.dart';
 import '../../data/api/api_exception.dart';
 import '../../data/models/form_type.dart';
 import '../../data/repositories/extraction_repository.dart';
-import '../../data/session/session_store.dart';
 import '../profile/edit_profile_screen.dart';
 import '../review/review_screen.dart';
 
@@ -74,30 +73,17 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
       // KHÔNG lưu profile ở đây: chỉ lưu khi người dùng kiểm tra rồi bấm Lưu
       // ở EditProfileScreen (Back ở màn xác nhận thì không để lại profile nào).
       if (widget.isProfileScan) {
-        if (widget.isForNewProfile) {
-          // Quét tạo profile mới → màn xác nhận, Lưu mới thêm profile.
-          Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
-            builder: (_) => EditProfileScreen(
-              initialCard: result.card,
-              profileIndex: null,
-              isInitialScan: true,
-            ),
-          ));
-        } else {
-          // Quét cập nhật profile mặc định hiện có → Lưu mới cập nhật.
-          Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
-            builder: (_) => EditProfileScreen(
-              initialCard: result.card,
-              profileIndex: sessionStore.hasProfiles
-                  ? sessionStore.selectedProfileIndex
-                  : null,
-              isInitialScan: true,
-            ),
-          ));
-        }
+        // Quét tạo profile mới → màn xác nhận, Lưu mới thêm profile.
+        Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
+          builder: (_) => EditProfileScreen(
+            initialCard: result.card,
+            profileIndex: null,
+            isInitialScan: true,
+          ),
+        ));
       } else {
         // Quét thẻ cho biểu mẫu: KHÔNG động vào Profile CCCD (thẻ có thể là
-        // của khách, không được ghi đè profile mặc định).
+        // của khách, không được ghi vào profile nào).
         Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
           builder: (_) => ReviewScreen(
             formType: widget.formType!,

@@ -9,7 +9,6 @@ Backend API phục vụ hệ thống e-KYC CCCD:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -88,21 +87,17 @@ def extract_cccd(
         )
         result = response.json()
 
-        # 3. In log kết quả trả về từ Colab
+        # 3. Log metadata (không log data CCCD để tránh lộ PII)
         card_side = result.get("side", side)
-        logger.info(f"================ COLAB RESPONSE [{card_side}] ================")
-        logger.info(f"📁 Filename : {result.get('filename')}")
-        logger.info(f"⏱️ Latency  : {result.get('latency_ms')} ms")
-        logger.info(f"✅ Parse OK : {result.get('parse_ok')}")
-
-        if result.get("data"):
-            logger.info("📄 PARSED DATA (JSON từ Model):")
-            logger.info(json.dumps(result.get("data"), ensure_ascii=False, indent=2))
-        else:
-            logger.warning(f"⚠️ RAW OUTPUT (Không parse được JSON): {result.get('raw')}")
-            logger.warning(f"⚠️ Lỗi (nếu có): {result.get('error')}")
-
-        logger.info("============================================================")
+        logger.info(
+            "COLAB RESPONSE [%s] file=%s parse_ok=%s latency_ms=%s",
+            card_side,
+            result.get("filename"),
+            result.get("parse_ok"),
+            result.get("latency_ms"),
+        )
+        if not result.get("parse_ok"):
+            logger.warning("⚠️ Trích xuất thất bại — error: %s", result.get("error"))
         return result
 
     except Exception as exc:

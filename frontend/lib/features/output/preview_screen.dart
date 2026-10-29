@@ -82,9 +82,13 @@ class _PreviewScreenState extends State<PreviewScreen> {
     );
 
     if (!mounted) return;
-    setState(() => _submitting = false);
-
-    if (reviewConfirmed == null || !reviewConfirmed) return;
+    // Không nhả lock ở đây — phải giữ đến khi submitRecord() hoàn tất (FE-002).
+    // Lock chỉ được nhả trong catch (lỗi) hoặc sau khi navigate thành công.
+    if (reviewConfirmed == null || !reviewConfirmed) {
+      // User bấm Hủy → nhả lock để cho phép thử lại.
+      setState(() => _submitting = false);
+      return;
+    }
 
     try {
       final saved = await sessionStore.submitRecord(

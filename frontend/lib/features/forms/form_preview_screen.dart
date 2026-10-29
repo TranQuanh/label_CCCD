@@ -334,7 +334,6 @@ class FormPreviewScreen extends StatelessWidget {
       ));
       return;
     }
-    final defaultIndex = sessionStore.selectedProfileIndex;
 
     showModalBottomSheet<void>(
       context: context,
@@ -374,17 +373,11 @@ class FormPreviewScreen extends StatelessWidget {
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (_, i) {
                     final p = profiles[i];
-                    final isDefault = i == defaultIndex;
                     return Material(
-                      color: isDefault
-                          ? AppColors.cobalt.withValues(alpha: .08)
-                          : Colors.white,
+                      color: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
-                        side: BorderSide(
-                            color: isDefault
-                                ? AppColors.cobalt.withValues(alpha: .3)
-                                : AppColors.lineSoft),
+                        side: const BorderSide(color: AppColors.lineSoft),
                       ),
                       child: ListTile(
                         shape: RoundedRectangleBorder(
@@ -413,14 +406,8 @@ class FormPreviewScreen extends StatelessWidget {
                               : 'Chưa có số CCCD',
                           style: const TextStyle(color: AppColors.muted),
                         ),
-                        trailing: isDefault
-                            ? const Text('Mặc định',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.cobalt))
-                            : const Icon(Icons.chevron_right,
-                                color: AppColors.muted),
+                        trailing: const Icon(Icons.chevron_right,
+                            color: AppColors.muted),
                         onTap: () {
                           Navigator.of(sheetContext).pop(); // Đóng sheet
                           // clone() để màn đối chiếu không sửa profile gốc.

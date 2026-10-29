@@ -297,8 +297,14 @@ VALUES
      'Tờ khai sức khỏe phục vụ khám chữa bệnh.',
      TRUE, TRUE,
      JSONB_BUILD_ARRAY(
-         JSONB_BUILD_OBJECT('key', 'phone',    'label', 'Số điện thoại liên hệ',  'hint', 'Nhập số điện thoại đang sử dụng'),
-         JSONB_BUILD_OBJECT('key', 'symptoms', 'label', 'Triệu chứng (nếu có)',   'hint', 'Nhập triệu chứng hoặc ghi "Không"')
+         JSONB_BUILD_OBJECT('key', 'phone',              'label', 'Số điện thoại liên hệ',                     'hint', 'Nhập số điện thoại đang sử dụng'),
+         JSONB_BUILD_OBJECT('key', 'symptoms',           'label', 'Triệu chứng (nếu có)',                      'hint', 'Nhập triệu chứng hoặc ghi "Không"'),
+         JSONB_BUILD_OBJECT('key', 'provinces_visited',  'label', 'Địa phương đã đi (14 ngày)',                'hint', 'Liệt kê tỉnh/thành phố, mỗi địa phương một dòng'),
+         JSONB_BUILD_OBJECT('key', 'from_outbreak_area', 'label', 'Đi đến/ở/về từ vùng dịch',                 'hint', 'co hoặc khong'),
+         JSONB_BUILD_OBJECT('key', 'contact_suspected',  'label', 'Tiếp xúc người nghi ngờ mắc bệnh',         'hint', 'co hoặc khong'),
+         JSONB_BUILD_OBJECT('key', 'contact_symptoms',   'label', 'Tiếp xúc người có triệu chứng sốt/ho',     'hint', 'co hoặc khong'),
+         JSONB_BUILD_OBJECT('key', 'has_fever_cough',    'label', 'Hiện có sốt/ho/khó thở/đau họng',          'hint', 'co hoặc khong'),
+         JSONB_BUILD_OBJECT('key', 'existing_conditions','label', 'Bệnh nền hiện có',                          'hint', 'Ghi tên bệnh hoặc "Không có"')
      ),
      NULL),
 
