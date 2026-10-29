@@ -157,10 +157,11 @@ def update_user(
             [*params, user_id],
         )
 
-    # Role đổi hoặc khóa → vô hiệu toàn bộ phiên của người đó.
+    # Role đổi, khóa, HOẶC reset mật khẩu → vô hiệu toàn bộ phiên của người đó.
     changed_privilege = (
         (body.role is not None and body.role != target["role"])
         or (body.is_active is not None and body.is_active != target["is_active"])
+        or (body.password is not None)  # BE-005: reset password phải thu hồi phiên cũ
     )
     if changed_privilege:
         _revoke_tokens(user_id)

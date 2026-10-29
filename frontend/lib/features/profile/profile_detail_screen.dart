@@ -42,27 +42,6 @@ class ProfileDetailScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _setDefault(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      // Tìm lại vị trí ngay lúc bấm (không dùng chỉ số cũ).
-      final index = sessionStore.indexOfProfile(profile);
-      if (index < 0) return;
-      await sessionStore.selectProfileAt(index);
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('✓ Đã đặt làm profile mặc định'),
-          backgroundColor: AppColors.valid,
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Lỗi khi chọn profile: $e')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -88,7 +67,6 @@ class ProfileDetailScreen extends StatelessWidget {
         // Đặt tên `current` (không dùng `profile`) để không che field [profile]
         // đã được dùng ở trên — Dart sẽ báo lỗi biên dịch nếu trùng tên.
         final current = profiles[profileIndex];
-        final isDefault = sessionStore.selectedProfileIndex == profileIndex;
         final map = current.toMap();
 
         return Scaffold(
@@ -151,51 +129,22 @@ class ProfileDetailScreen extends StatelessWidget {
             ),
             padding: EdgeInsets.fromLTRB(
                 20, 12, 20, MediaQuery.of(context).padding.bottom + 14),
-            child: Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: OutlinedButton.icon(
-                      onPressed: isDefault ? null : () => _setDefault(context),
-                      icon: Icon(
-                          isDefault ? Icons.check_circle : Icons.star_outline,
-                          size: 18),
-                      label: Text(isDefault ? 'Đang mặc định' : 'Đặt mặc định',
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w700)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.navy,
-                        side: const BorderSide(color: AppColors.line),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.button)),
-                      ),
-                    ),
-                  ),
+            child: SizedBox(
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: () => _edit(context, current, profileIndex),
+                icon: const Icon(Icons.edit, size: 18),
+                label: const Text('Sửa thông tin',
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.flagRed,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.button)),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SizedBox(
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _edit(context, current, profileIndex),
-                      icon: const Icon(Icons.edit, size: 18),
-                      label: const Text('Sửa thông tin',
-                          style: TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w700)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.flagRed,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.button)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         );

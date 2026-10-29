@@ -56,8 +56,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    // Tạo mới (không initialCard, không profileIndex) → form TRỐNG; không điền
-    // sẵn profile mặc định (trước đây làm lưu ra bản trùng).
+    // Tạo mới (không initialCard, không profileIndex) → form TRỐNG, không điền
+    // sẵn dữ liệu của profile nào (trước đây làm lưu ra bản trùng).
     final idx = widget.profileIndex;
     final profiles = sessionStore.profiles;
     _target = (idx != null && idx >= 0 && idx < profiles.length)
