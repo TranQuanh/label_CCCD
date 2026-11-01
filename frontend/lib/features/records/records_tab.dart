@@ -8,7 +8,6 @@ import '../output/preview_screen.dart';
 /// Tab 2 — Hồ sơ người dùng đã tạo.
 ///
 /// P2: ở chế độ thật, lịch sử tải từ server (`GET /scan-records`) khi mở tab.
-/// Viewer thấy bản che số CCCD (banner "dữ liệu đã được che").
 class RecordsTab extends StatefulWidget {
   final VoidCallback onCreateNew;
   const RecordsTab({super.key, required this.onCreateNew});

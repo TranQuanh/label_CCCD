@@ -151,7 +151,8 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
     final username = user['username']?.toString() ?? '';
     final fullName = user['full_name']?.toString() ?? '';
     final email = user['email']?.toString() ?? '';
-    final role = user['role']?.toString() ?? 'operator';
+    final rawRole = user['role']?.toString() ?? 'user';
+    final role = (rawRole == 'admin') ? 'admin' : 'user';
     final active = user['is_active'] as bool? ?? true;
     final isSelf = user['id'].toString() == sessionStore.user?.id;
 
@@ -235,8 +236,7 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
                 ),
                 items: const [
                   DropdownMenuItem(value: 'admin', child: Text('admin')),
-                  DropdownMenuItem(value: 'operator', child: Text('operator')),
-                  DropdownMenuItem(value: 'viewer', child: Text('viewer')),
+                  DropdownMenuItem(value: 'user', child: Text('user')),
                 ],
                 onChanged: isSelf
                     ? null

@@ -117,10 +117,8 @@ class AccountTab extends StatelessWidget {
     switch (role) {
       case 'admin':
         return 'Quản trị viên';
-      case 'operator':
-        return 'Cán bộ xử lý';
-      case 'viewer':
-        return 'Người xem';
+      case 'user':
+        return 'Người dùng';
       default:
         return role;
     }

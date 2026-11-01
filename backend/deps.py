@@ -2,9 +2,9 @@
 deps.py
 =======
 Phụ thuộc FastAPI dùng chung cho các router:
-  get_current_user     — giải mã Bearer token → user (kèm kiểm tra blacklist/active/tok_ver)
-  require_admin        — ép role == 'admin' (dùng cho /users, /audit-logs)
-  require_role(min_role) — RBAC: 'viewer' < 'operator' < 'admin'
+  get_current_user       — giải mã Bearer token → user (kèm kiểm tra blacklist/active/tok_ver)
+  require_admin          — ép role == 'admin' (dùng cho /users, /audit-logs)
+  require_role(min_role) — RBAC: 'user' < 'admin'
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from . import db, redis_client
 from .security import decode_access_token
 
 # Thứ tự quyền: càng về sau càng cao.
-ROLE_LEVELS = {"viewer": 1, "operator": 2, "admin": 3}
+ROLE_LEVELS = {"user": 1, "admin": 2}
 
-# Tên cột role dùng chung cho mọi truy vấn đọc user.
-ROLE_ORDER = "CASE role WHEN 'admin' THEN 3 WHEN 'operator' THEN 2 ELSE 1 END"
+# Tên biểu thức SQL sắp xếp theo cấp độ role dùng chung cho các truy vấn đọc user.
+ROLE_ORDER = "CASE role WHEN 'admin' THEN 2 ELSE 1 END"
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -69,7 +69,7 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 
 def require_role(min_role: str):
-    """RBAC: yêu cầu role tối thiểu. viewer < operator < admin."""
+    """RBAC: yêu cầu role tối thiểu. user < admin."""
 
     def checker(user: dict = Depends(get_current_user)) -> dict:
         if ROLE_LEVELS.get(user["role"], 0) < ROLE_LEVELS[min_role]:

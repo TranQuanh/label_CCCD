@@ -4,13 +4,12 @@ smoke_test.py
 Smoke test P1+P2 — chạy trực tiếp qua FastAPI TestClient (không cần uvicorn).
 
 Cover:
-  P1 — register → login sai 5 lần (lock) → login đúng → me → refresh → logout →
-       kiểm access cũ bị blacklist → admin tạo user + đổi role → token cũ bị
+  P1 — register (role user) → login sai 5 lần (lock) → login đúng → me → refresh → logout →
+       kiểm access cũ bị blacklist → admin tạo user + đổi role (user → admin) → token cũ bị
        từ chối → audit-logs đủ sự kiện.
   P2 — /forms trả metadata JSONB {key,label,hint}; admin POST/PUT /forms;
        gửi hồ sơ (POST /scan-records) nhận mã server; lịch sử từ PostgreSQL;
-       hàng đợi duyệt + duyệt; viewer chỉ đọc bản đã duyệt có CCCD che;
-       đổi mật khẩu (bỏ OTP, verify mật khẩu hiện tại).
+       đổi mật khẩu (bỏ OTP, verify mật khẩu hiện tại); quản lý profiles CCCD.
 
 Chạy:
   $env:SKIP_MODEL_LOAD='1'
@@ -88,7 +87,7 @@ def _run(client: TestClient) -> None:
     user_id = body.get("data", {}).get("user_id")
     access = body["data"]["access_token"]
     refresh = body["data"]["refresh_token"]
-    check("register tự đăng nhập role operator", body.get("data", {}).get("role") == "operator")
+    check("register tự đăng nhập role user", body.get("data", {}).get("role") == "user")
 
     r = client.post("/api/v1/auth/register", json={
         "username": "nguyenvana",
@@ -133,14 +132,14 @@ def _run(client: TestClient) -> None:
     check("login bằng email → 200", r.status_code == 200, str(body))
     access = body["data"]["access_token"]
     refresh = body["data"]["refresh_token"]
-    check("role operator", body.get("data", {}).get("role") == "operator")
+    check("role user", body.get("data", {}).get("role") == "user")
 
     print("== /auth/me ==")
     r = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access}"})
     body = r.json()
     check("me 200", r.status_code == 200, str(body))
     check("me trả username + email + role", body.get("username") == "nguyenvana"
-          and body.get("email") == "nguyenvana@demo.vn" and body.get("role") == "operator")
+          and body.get("email") == "nguyenvana@demo.vn" and body.get("role") == "user")
     check("me trả full_name", body.get("full_name") == "Nguyễn Văn A")
 
     print("== Refresh ==")
@@ -201,23 +200,23 @@ def _run(client: TestClient) -> None:
     check("GET /users (admin) 200", r.status_code == 200, str(r.json())[:80])
     check("GET /users có ≥2 user", len(r.json().get("users", [])) >= 2)
 
-    # operator token cũ (access) — đã logout; đăng nhập lại để test guard.
+    # user token cũ (access) — đã logout; đăng nhập lại để test guard.
     r = client.post("/api/v1/auth/login", json={
         "identifier": "nguyenvana", "password": "demoPass123",
     })
-    op_access = r.json()["data"]["access_token"]
+    user_access = r.json()["data"]["access_token"]
 
-    r = client.get("/api/v1/users", headers={"Authorization": f"Bearer {op_access}"})
-    check("GET /users (operator) → 403", r.status_code == 403, str(r.json()))
+    r = client.get("/api/v1/users", headers={"Authorization": f"Bearer {user_access}"})
+    check("GET /users (user) → 403", r.status_code == 403, str(r.json()))
 
     r = client.put(
         f"/api/v1/users/{user_id}",
         headers={"Authorization": f"Bearer {admin_access}"},
-        json={"role": "viewer"},
+        json={"role": "admin"},
     )
-    check("admin đổi role operator→viewer 200", r.status_code == 200, str(r.json()))
+    check("admin đổi role user→admin 200", r.status_code == 200, str(r.json()))
 
-    r = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {op_access}"})
+    r = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {user_access}"})
     check("token cũ sau đổi role bị vô hiệu (401)", r.status_code == 401, str(r.json()))
 
     r = client.post("/api/v1/auth/login", json={
@@ -225,14 +224,14 @@ def _run(client: TestClient) -> None:
     })
     check("user vẫn đăng nhập được sau đổi role", r.status_code == 200)
     r = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {r.json()['data']['access_token']}"})
-    check("me trả role mới = viewer", r.json().get("role") == "viewer", str(r.json()))
+    check("me trả role mới = admin", r.json().get("role") == "admin", str(r.json()))
 
     print("== Guards admin ==")
     # admin không tự hạ quyền được
     r = client.put(
         f"/api/v1/users/{admin_id}",
         headers={"Authorization": f"Bearer {admin_access}"},
-        json={"role": "operator"},
+        json={"role": "user"},
     )
     check("admin tự hạ quyền → 400", r.status_code == 400, str(r.json()))
     # admin không khóa admin cuối cùng
@@ -244,17 +243,17 @@ def _run(client: TestClient) -> None:
     check("admin khóa chính mình → 400", r.status_code == 400, str(r.json()))
 
     print("== P2: Admin quản lý biểu mẫu (POST/PUT /forms) ==")
-    # Đăng ký operator1 để test các luồng hồ sơ (giữ role operator).
+    # Đăng ký user1 để test các luồng hồ sơ (giữ role user).
     r = client.post("/api/v1/auth/register", json={
-        "username": "operator1", "email": "operator1@cccd.local",
-        "password": "opPass123", "full_name": "Operator 1",
+        "username": "user1", "email": "user1@cccd.local",
+        "password": "userPass123", "full_name": "User 1",
     })
-    operator1_access = r.json()["data"]["access_token"]
-    check("đăng ký operator1 201", r.status_code == 201)
+    user1_access = r.json()["data"]["access_token"]
+    check("đăng ký user1 201", r.status_code == 201)
 
-    r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {operator1_access}"},
+    r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {user1_access}"},
                     json={"slug": "x", "name": "X", "required_fields": []})
-    check("tạo form (operator) → 403", r.status_code == 403, str(r.json()))
+    check("tạo form (user) → 403", r.status_code == 403, str(r.json()))
 
     r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {admin_access}"},
                     json={"slug": "work_permit", "name": "Giấy phép lao động",
@@ -283,7 +282,7 @@ def _run(client: TestClient) -> None:
         "ngay_sinh": "01/01/1990", "gioi_tinh": "Nam", "quoc_tich": "Việt Nam",
         "que_quan": "Hà Nội", "noi_thuong_tru": "Hà Nội", "co_gia_tri_den": "01/01/2030",
     }
-    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"},
                     json={"form_id": "atm_open", "extracted_data": card,
                           "supp": {"phone": "0901234567", "occupation": "Kỹ sư"},
                           "card_side": "both", "parse_ok": True, "is_edited": False})
@@ -293,136 +292,106 @@ def _run(client: TestClient) -> None:
     rec_id = body.get("record_id")
     rec_code = body.get("code")
 
-    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"},
                     json={"form_id": "khong-ton-tai", "extracted_data": card})
     check("gửi với form không tồn tại → 404", r.status_code == 404, str(r.json()))
 
-    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"},
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"},
                     json={"form_id": "atm_open", "extracted_data": {}})
     check("gửi extracted_data rỗng → 400", r.status_code == 400, str(r.json()))
 
     print("== P2: Lịch sử hồ sơ ==")
-    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {operator1_access}"})
+    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"})
     body = r.json()
-    check("GET /scan-records (operator) 200", r.status_code == 200, str(body)[:80])
+    check("GET /scan-records (user) 200", r.status_code == 200, str(body)[:80])
     check("lịch sử có record vừa gửi", body.get("count", 0) >= 1
           and body["records"][0]["code"] == rec_code)
     check("lịch sử trả supp + extracted_data", body["records"][0].get("supp", {}).get("phone") == "0901234567"
           and body["records"][0]["extracted_data"].get("so_cccd") == "001201123456")
     check("lịch sử trả tên biểu mẫu", body["records"][0].get("form_name") == "Đăng ký mở thẻ ATM")
 
-    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {operator1_access}"})
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {user1_access}"})
     check("GET chi tiết record 200", r.status_code == 200, str(r.json())[:80])
 
-    # operator không xem được record của người khác (chỉ có record của operator1).
+    # admin xem được record của user khác
     r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {admin_access}"})
     check("admin xem được record (có quyền)", r.status_code == 200, str(r.json())[:80])
 
-    # (Đã bỏ requirement duyệt hồ sơ: không còn review-queue và review_status)
-
-    print("== P2: Viewer — chỉ đọc bản đã duyệt, CCCD bị che ==")
-    # nguyenvana đã được đổi role viewer ở phần P1 admin bên trên.
-    r = client.post("/api/v1/auth/login", json={
-        "identifier": "nguyenvana", "password": "demoPass123",
-    })
-    viewer_access = r.json()["data"]["access_token"]
-    check("viewer login 200", r.status_code == 200)
-
-    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {viewer_access}"})
-    body = r.json()
-    check("viewer xem lịch sử → masked=true", body.get("masked") is True, str(body)[:120])
-    viewer_records = body.get("records", [])
-    check("viewer thấy ít nhất 1 record đã duyệt", len(viewer_records) >= 1)
-    # viewer thấy record đã duyệt của người khác — số CCCD phải bị che.
-    if viewer_records:
-        masked_cccd = viewer_records[0]["extracted_data"].get("so_cccd", "")
-        check("viewer thấy CCCD bị che (******)", "******" in masked_cccd, masked_cccd)
-
-    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {viewer_access}"})
-    check("viewer xem chi tiết record đã duyệt 200", r.status_code == 200, str(r.json())[:80])
-
-    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {viewer_access}"},
-                    json={"form_id": "atm_open", "extracted_data": card})
-    check("viewer gửi hồ sơ → 403", r.status_code == 403, str(r.json()))
-
-    r = client.get("/api/v1/scan-records/review-queue", headers={"Authorization": f"Bearer {viewer_access}"})
-    check("viewer xem review-queue → 403", r.status_code == 403, str(r.json()))
-
     print("== Profile CCCD (/profiles) ==")
-    op_h = {"Authorization": f"Bearer {operator1_access}"}
+    user1_h = {"Authorization": f"Bearer {user1_access}"}
     admin_h = {"Authorization": f"Bearer {admin_access}"}
-    r = client.get("/api/v1/profiles", headers=op_h)
+    r = client.get("/api/v1/profiles", headers=user1_h)
     check("GET /profiles rỗng 200", r.status_code == 200 and r.json().get("profiles") == [], str(r.json()))
 
     prof1 = {**card, "so_cccd": "001201123456"}
     prof2 = {**card, "so_cccd": "001201654321", "ho_va_ten": "TRẦN THỊ B"}
-    r = client.post("/api/v1/profiles", headers=op_h, json={"data": prof1})
+    r = client.post("/api/v1/profiles", headers=user1_h, json={"data": prof1})
     p1 = r.json()
     check("tạo profile 1 → 201, không còn trường is_default",
           r.status_code == 201 and "is_default" not in p1, str(p1))
-    r = client.post("/api/v1/profiles", headers=op_h, json={"data": prof2})
+    r = client.post("/api/v1/profiles", headers=user1_h, json={"data": prof2})
     p2 = r.json()
     check("tạo profile 2 → 201", r.status_code == 201 and bool(p2.get("id")), str(p2))
 
-    r = client.post("/api/v1/profiles", headers=op_h,
+    r = client.post("/api/v1/profiles", headers=user1_h,
                     json={"data": {**card, "so_cccd": "001 201 123456"}})
     check("tạo profile trùng số CCCD (có khoảng trắng) → 409", r.status_code == 409, str(r.json()))
-    r = client.post("/api/v1/profiles", headers=op_h,
+    r = client.post("/api/v1/profiles", headers=user1_h,
                     json={"data": {**card, "so_cccd": "001.201.123456"}})
     check("tạo profile trùng số CCCD (có dấu chấm) → 409", r.status_code == 409, str(r.json()))
-    r = client.post("/api/v1/profiles", headers=op_h, json={"data": {}})
+    r = client.post("/api/v1/profiles", headers=user1_h, json={"data": {}})
     check("tạo profile data rỗng → 400", r.status_code == 400, str(r.json()))
 
-    r = client.get("/api/v1/profiles", headers=op_h)
+    r = client.get("/api/v1/profiles", headers=user1_h)
     ids = [p["id"] for p in r.json().get("profiles", [])]
     check("GET /profiles có 2 profile theo created_at ASC", ids == [p1.get("id"), p2.get("id")], str(ids))
 
-    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=op_h, json={"data": prof1})
+    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=user1_h, json={"data": prof1})
     check("sửa profile 2 thành số CCCD của profile 1 → 409", r.status_code == 409, str(r.json()))
-    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=op_h,
+    r = client.put(f"/api/v1/profiles/{p2.get('id')}", headers=user1_h,
                    json={"data": {**prof2, "ho_va_ten": "TRẦN THỊ C"}})
     check("sửa profile hợp lệ → 200", r.status_code == 200
           and r.json().get("data", {}).get("ho_va_ten") == "TRẦN THỊ C", str(r.json()))
 
-    r = client.post(f"/api/v1/profiles/{p2.get('id')}/default", headers=op_h)
+    r = client.post(f"/api/v1/profiles/{p2.get('id')}/default", headers=user1_h)
     check("endpoint đặt mặc định đã bỏ → 404/405", r.status_code in (404, 405), str(r.status_code))
 
     r = client.put(f"/api/v1/profiles/{p1.get('id')}", headers=admin_h, json={"data": prof1})
-    check("admin sửa profile của operator1 → 404", r.status_code == 404, str(r.json()))
+    check("admin sửa profile của user1 → 404", r.status_code == 404, str(r.json()))
     r = client.delete(f"/api/v1/profiles/{p1.get('id')}", headers=admin_h)
-    check("admin xoá profile của operator1 → 404", r.status_code == 404, str(r.json()))
+    check("admin xoá profile của user1 → 404", r.status_code == 404, str(r.json()))
 
-    r = client.delete(f"/api/v1/profiles/{p2.get('id')}", headers=op_h)
+    r = client.delete(f"/api/v1/profiles/{p2.get('id')}", headers=user1_h)
     check("xoá profile 2 → 200", r.status_code == 200, str(r.json()))
-    r = client.get("/api/v1/profiles", headers=op_h)
+    r = client.get("/api/v1/profiles", headers=user1_h)
     ids = [p["id"] for p in r.json().get("profiles", [])]
     check("sau khi xoá chỉ còn profile 1", ids == [p1.get("id")], str(ids))
-    r = client.delete("/api/v1/profiles/abc", headers=op_h)
+    r = client.delete("/api/v1/profiles/abc", headers=user1_h)
     check("xoá id không hợp lệ → 404", r.status_code == 404, str(r.json()))
 
     print("== P2: Đổi mật khẩu (không OTP) ==")
     r = client.post("/api/v1/auth/change-password",
-                    headers={"Authorization": f"Bearer {operator1_access}"},
+                    headers={"Authorization": f"Bearer {user1_access}"},
                     json={"current_password": "sai-mat-khau", "new_password": "newPass123"})
     check("đổi mật khẩu sai current → 400", r.status_code == 400, str(r.json()))
 
     r = client.post("/api/v1/auth/change-password",
-                    headers={"Authorization": f"Bearer {operator1_access}"},
-                    json={"current_password": "opPass123", "new_password": "newPass123"})
+                    headers={"Authorization": f"Bearer {user1_access}"},
+                    json={"current_password": "userPass123", "new_password": "newPass123"})
     check("đổi mật khẩu đúng → 200", r.status_code == 200, str(r.json())[:80])
 
     r = client.post("/api/v1/auth/login", json={
-        "identifier": "operator1", "password": "opPass123",
+        "identifier": "user1", "password": "userPass123",
     })
     check("mật khẩu cũ hết hiệu lực", r.status_code == 401, str(r.json()))
     r = client.post("/api/v1/auth/login", json={
-        "identifier": "operator1", "password": "newPass123",
+        "identifier": "user1", "password": "newPass123",
     })
     check("mật khẩu mới đăng nhập được", r.status_code == 200)
-    operator1_access = r.json()["data"]["access_token"]
+    user1_access = r.json()["data"]["access_token"]
 
     r = client.post("/api/v1/auth/change-password",
-                    headers={"Authorization": f"Bearer {operator1_access}"},
+                    headers={"Authorization": f"Bearer {user1_access}"},
                     json={"current_password": "newPass123", "new_password": "newPass123"})
     check("đổi mật khẩu trùng mật khẩu cũ → 400", r.status_code == 400, str(r.json()))
 
@@ -433,7 +402,7 @@ def _run(client: TestClient) -> None:
     actions = {log["action"] for log in body.get("logs", [])}
     check("có đủ sự kiện P1+P2", {"auth.register", "auth.login", "auth.logout",
                                   "auth.login_failed", "user.update",
-                                  "record.create", "record.review",
+                                  "record.create",
                                   "auth.change_password"} <= actions,
           str(sorted(actions)))
     check("có sự kiện profile.create", "profile.create" in actions, str(sorted(actions)))

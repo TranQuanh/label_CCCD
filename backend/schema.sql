@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS tblUser (
     email              VARCHAR(255) NOT NULL UNIQUE,
     password_hash      VARCHAR(255) NOT NULL,
     full_name          VARCHAR(255),
-    role               VARCHAR(20)  NOT NULL DEFAULT 'operator',
+    role               VARCHAR(20)  NOT NULL DEFAULT 'user',
     is_active          BOOLEAN      NOT NULL DEFAULT TRUE,
     failed_login_count INT          NOT NULL DEFAULT 0,
     locked_until       TIMESTAMP,

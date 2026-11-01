@@ -1,29 +1,21 @@
 """
 records.py
 ==========
-Router hồ sơ trích xuất (`/scan-records`) — P2: lịch sử từ PostgreSQL.
+Router hồ sơ trích xuất (`/scan-records`) — lịch sử từ PostgreSQL.
 
-Đây là nguồn chân lý lịch sử hồ sơ (quyết định #3: server là nguồn chân lý, thiết
-bị chỉ cache/mock). Nó thay chỗ lưu RAM trong `sessionStore` phía frontend.
+Đây là nguồn chân lý lịch sử hồ sơ (server là nguồn chân lý, thiết bị chỉ cache/mock).
 
 Quyền hạn (RBAC):
-  - POST /scan-records       — operator+ (viewer cũng được gửi hồ sơ).
-  - GET  /scan-records       — operator/admin: hồ sơ của chính mình; admin có thể
-                               truyền `?user_id=` để xem của người khác. viewer:
-                               hồ sơ của chính mình.
+  - POST /scan-records       — user / admin: gửi hồ sơ trích xuất.
+  - GET  /scan-records       — user: danh sách hồ sơ của chính mình (không bao gồm hồ sơ bị ẩn).
+                               admin: mặc định xem của chính mình; có thể truyền `?user_id=` 
+                               để xem của người khác hoặc `?all_users=true` để xem toàn bộ.
   - GET  /scan-records/{id}  — chủ sở hữu / admin.
-  - GET  /scan-records?all_users=true     — admin: hồ sơ của mọi người dùng.
-  - PATCH /scan-records/{id}/visibility   — admin: ẩn / hiện hồ sơ. Hồ sơ bị ẩn
-                               không hiện trong lịch sử của chủ hồ sơ và chủ hồ sơ
-                               không xem/sửa được (404); admin vẫn thấy.
+  - PATCH /scan-records/{id} — chủ sở hữu / admin: cập nhật dữ liệu trích xuất.
+  - PATCH /scan-records/{id}/visibility — admin: ẩn / hiện hồ sơ. Hồ sơ bị ẩn
+                               không hiện trong lịch sử của chủ hồ sơ (404); admin vẫn thấy.
 
-Mã hồ sơ (`code`) do SERVER cấp (quyết định thiết kế) — client không tự sinh nữa.
-Dạng: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
-
-THAY ĐỔI QUAN TRỌNG (theo yêu cầu user):
-- Bỏ requirement admin review: bỏ review_status
-- Viewer có thể submit record
-- Xoá chức năng review queue
+Mã hồ sơ (`code`) do SERVER cấp: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
 """
 
 from __future__ import annotations
@@ -47,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scan-records", tags=["scan-records"])
 
-# Chỉ cho phép các giá trị card_side hợp lệ.
 VALID_SIDES = ("front", "back", "both")
 
 
@@ -57,7 +48,7 @@ def _now_naive() -> datetime:
 
 
 def _jsonb(value) -> Optional[str]:
-    """Dict → chuỗi JSON hợp lệ cho cột JSONB (giống audit.__jsonb)."""
+    """Dict → chuỗi JSON hợp lệ cho cột JSONB."""
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False)
@@ -72,13 +63,12 @@ def _generate_code() -> str:
         exists = db.fetch_one("SELECT id FROM tblScanRecord WHERE code = %s", (candidate,))
         if exists is None:
             return candidate
-    # Trường hợp cực hiếm trùng liên tiếp — thêm hậu tố ms để đảm bảo duy nhất.
     return prefix + f"{now.microsecond % 1000000:06d}"
 
 
 # ── Models ─────────────────────────────────────────────────────────────────
 class SubmitRecordBody(BaseModel):
-    form_id: str = Field(min_length=1, max_length=100)  # slug
+    form_id: str = Field(min_length=1, max_length=100)
     extracted_data: dict[str, Any] = Field(default_factory=dict)
     supp: dict[str, str] = Field(default_factory=dict)
     card_side: str = Field(default="both", max_length=10)
@@ -96,7 +86,7 @@ class UpdateRecordBody(BaseModel):
     extracted_data: dict[str, Any] = Field(default_factory=dict)
     supp: dict[str, str] = Field(default_factory=dict)
     parse_ok: bool = True
-    is_edited: bool = True  # mặc định True vì user đang sửa tay
+    is_edited: bool = True
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -136,8 +126,7 @@ def _record_join() -> str:
 def _get_record_accessible(record_id: str, user: dict) -> dict:
     """
     Lấy 1 record mà user được phép xem: owner/admin.
-    404 nếu không tồn tại HOẶC không có quyền (không lộ sự tồn tại).
-    Hồ sơ bị admin ẩn coi như không tồn tại với chủ hồ sơ (không xem/sửa được).
+    Hồ sơ bị admin ẩn coi như không tồn tại với người dùng thông thường (chủ hồ sơ).
     """
     role = user["role"]
     if role == "admin":
@@ -147,6 +136,7 @@ def _get_record_accessible(record_id: str, user: dict) -> dict:
         query = (f"{_record_join()} WHERE r.id = %s AND r.user_id = %s "
                  f"AND r.is_hidden = FALSE")
         params = (record_id, user["id"])
+
     row = db.fetch_one(query, params)
     if row is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
@@ -162,10 +152,7 @@ def submit_record(
 ) -> dict:
     """
     Gửi một hồ sơ trích xuất lên server.
-
-    Server sinh mã hồ sơ.
-    Trường bổ sung `supp` lưu riêng; `extracted_data` là JSONB tiếng Việt snake_case.
-    Tất cả user (kể cả viewer) đều có thể submit.
+    Mọi tài khoản đã đăng nhập (user/admin) đều có quyền submit.
     """
     form_uuid = resolve_form_uuid(body.form_id.strip())
     if form_uuid is None:
@@ -205,9 +192,8 @@ def list_records(
     """
     Lịch sử hồ sơ từ PostgreSQL.
 
-    operator/viewer: hồ sơ của chính mình, TRỪ hồ sơ bị admin ẩn.
-    admin: của mình; `?user_id=` của một người khác; `?all_users=true` của mọi
-    người (kèm cả hồ sơ đã ẩn, để quản lý ẩn/hiện).
+    user: hồ sơ của chính mình (loại bỏ các hồ sơ đã bị admin ẩn).
+    admin: hồ sơ của mình; `?user_id=` của user khác; `?all_users=true` của mọi người.
     """
     role = user["role"]
 
@@ -217,14 +203,14 @@ def list_records(
 
     if role == "admin":
         if all_users:
-            pass  # không lọc theo người dùng
+            pass
         elif user_id:
             clauses.append("r.user_id = %s")
             params.append(user_id)
         else:
             clauses.append("r.user_id = %s")
             params.append(user["id"])
-    else:  # operator hoặc viewer
+    else:  # user
         clauses.append("r.user_id = %s")
         params.append(user["id"])
         clauses.append("r.is_hidden = FALSE")
@@ -240,10 +226,6 @@ def list_records(
     }
 
 
-# Xoá endpoint review-queue vì không cần chức năng review
-# Xoá endpoint review vì không cần admin duyệt
-
-
 @router.patch("/{record_id}")
 def update_record(
     record_id: str,
@@ -251,14 +233,7 @@ def update_record(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """
-    Cập nhật thông tin một hồ sơ đã gửi (chủ sở hữu / admin).
-
-    Chỉ cho phép sửa `extracted_data`, `supp`, `parse_ok`, `is_edited`.
-    Không thay đổi `code`, `form_type_id`, `created_at`.
-    `is_edited` tự động đặt True để đánh dấu đã qua tay người dùng.
-    """
-    # Kiểm tra record tồn tại và user có quyền
+    """Cập nhật thông tin một hồ sơ đã gửi (chủ sở hữu / admin)."""
     _get_record_accessible(record_id, user)
 
     if not body.extracted_data:
@@ -277,7 +252,6 @@ def update_record(
     audit(user["id"], "record.update", "record", record_id,
           {"is_edited": body.is_edited}, ip, device)
 
-    # Trả về record sau khi cập nhật
     row = _get_record_accessible(record_id, user)
     return _serialize(row)
 
@@ -289,10 +263,7 @@ def set_record_visibility(
     request: Request,
     admin: dict = Depends(require_admin),
 ) -> dict:
-    """
-    Admin ẩn / hiện một hồ sơ. Hồ sơ bị ẩn không còn xuất hiện trong lịch sử
-    của chủ hồ sơ và chủ hồ sơ không xem/sửa được; dữ liệu vẫn giữ nguyên.
-    """
+    """Admin ẩn / hiện một hồ sơ."""
     try:
         record_id = str(uuid_mod.UUID(record_id))
     except (ValueError, TypeError):

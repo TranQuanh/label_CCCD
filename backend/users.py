@@ -36,7 +36,7 @@ class CreateUserBody(BaseModel):
     email: str = Field(max_length=255)
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(default="", max_length=255)
-    role: str = Field(default="operator")
+    role: str = Field(default="user")
 
 
 class UpdateUserBody(BaseModel):
@@ -140,7 +140,7 @@ def update_user(
         params.append(body.full_name.strip())
     if body.password is not None:
         if len(body.password) < 8:
-            raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 8 ký tự")
+            raise HTTPException(status_code=400, detail="Mật khẩu phải me ít nhất 8 ký tự")
         updates.append("password_hash = %s")
         params.append(hash_password(body.password))
     if body.role is not None and body.role != target["role"]:
@@ -161,7 +161,7 @@ def update_user(
     changed_privilege = (
         (body.role is not None and body.role != target["role"])
         or (body.is_active is not None and body.is_active != target["is_active"])
-        or (body.password is not None)  # BE-005: reset password phải thu hồi phiên cũ
+        or (body.password is not None)
     )
     if changed_privilege:
         _revoke_tokens(user_id)

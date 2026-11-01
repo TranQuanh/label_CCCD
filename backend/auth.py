@@ -153,7 +153,7 @@ def register(body: RegisterBody, request: Request) -> dict:
     with db.get_conn() as conn:
         user_id = conn.execute(
             "INSERT INTO tblUser (username, email, password_hash, full_name, role) "
-            "VALUES (%s, %s, %s, %s, 'operator') RETURNING id",
+            "VALUES (%s, %s, %s, %s, 'user') RETURNING id",
             (username, email, hash_password(body.password), full_name),
         ).fetchone()["id"]
         user = conn.execute(
