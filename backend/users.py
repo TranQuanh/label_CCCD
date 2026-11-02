@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .audit import audit
+from .auth import EMAIL_RE, _validate_password  # DEF-17: tái dùng policy validation
 from .deps import ROLE_LEVELS, require_admin
 from .security import hash_password
 
@@ -79,14 +80,28 @@ def list_users() -> dict:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_user(body: CreateUserBody, request: Request, admin: dict = Depends(require_admin)):
-    """Admin tạo tài khoản mới (không cần người dùng đăng ký)."""
+    """Admin tạo tài khoản mới (không cần người dùng đăng ký).
+    DEF-17: áp dụng đúng policy email/password giống endpoint register.
+    """
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Role không hợp lệ (chấp nhận: {', '.join(VALID_ROLES)})")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 8 ký tự")
 
+    # DEF-17: validate email bằng regex như /register
     username = body.username.strip()
     email = body.email.strip().lower()
+    full_name = body.full_name.strip()
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập không được rỗng")
+    if "@" in username:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập không được chứa ký tự @")
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Email không hợp lệ")
+
+    # DEF-17: validate password bằng cùng hàm _validate_password như /register
+    pw_err = _validate_password(body.password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
     exists = db.fetch_one(
         "SELECT id FROM tblUser WHERE username = %s OR email = %s", (username, email)
     )
@@ -96,7 +111,7 @@ def create_user(body: CreateUserBody, request: Request, admin: dict = Depends(re
     user_id = db.fetch_one(
         "INSERT INTO tblUser (username, email, password_hash, full_name, role) "
         "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (username, email, hash_password(body.password), body.full_name.strip(), body.role),
+        (username, email, hash_password(body.password), full_name, body.role),
     )["id"]
     ip = request.client.host if request.client else None
     audit(admin["id"], "user.create", "user", user_id, {"username": username}, ip)
@@ -119,9 +134,13 @@ def update_user(
     if body.role is not None and body.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Role không hợp lệ (chấp nhận: {', '.join(VALID_ROLES)})")
 
-    # Không cho admin tự hạ quyền chính mình.
-    if user_id == admin["id"] and body.role is not None and body.role != "admin":
+    # Không cho admin tự hạ quyền chính mình (DEF-04: str() để so sánh đúng UUID vs str).
+    if str(user_id) == str(admin["id"]) and body.role is not None and body.role != "admin":
         raise HTTPException(status_code=400, detail="Không thể hạ quyền của chính bạn")
+
+    # Không cho admin tự khoá tài khoản của chính mình (DEF-21).
+    if str(user_id) == str(admin["id"]) and body.is_active is False:
+        raise HTTPException(status_code=400, detail="Không thể tự khoá tài khoản của chính bạn")
 
     # Không cho vô hiệu hóa / hạ quyền admin cuối cùng.
     if target["role"] == "admin" and target["is_active"]:
@@ -167,5 +186,11 @@ def update_user(
         _revoke_tokens(user_id)
 
     ip = request.client.host if request.client else None
-    audit(admin["id"], "user.update", "user", user_id, body.model_dump(exclude_none=True), ip)
+    # DEF-03: không log password dạng plaintext vào audit.
+    # model_dump() sẽ chứa password nếu admin đặt lại — loại bỏ trước khi ghi log.
+    audit_meta = {k: v for k, v in body.model_dump(exclude_none=True).items()
+                  if k != "password"}
+    if body.password is not None:
+        audit_meta["password_reset"] = True  # chỉ ghi cờ, không ghi giá trị
+    audit(admin["id"], "user.update", "user", user_id, audit_meta, ip)
     return {"message": "Đã cập nhật tài khoản"}

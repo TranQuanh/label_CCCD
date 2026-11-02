@@ -263,18 +263,10 @@ CREATE INDEX IF NOT EXISTS idx_cccd_profile_user ON tblCccdProfile(user_id, crea
 DROP INDEX IF EXISTS uq_cccd_profile_default;
 ALTER TABLE tblCccdProfile DROP COLUMN IF EXISTS is_default;
 
--- Migration: chuyển tblUser.cccd_profile (1 object, bản cũ) sang tblCccdProfile
--- (chỉ với user chưa có profile nào → chạy lại nhiều lần không nhân bản dữ liệu)
-DO $$
-BEGIN
-    INSERT INTO tblCccdProfile (user_id, data)
-    SELECT u.id, u.cccd_profile
-    FROM tblUser u
-    WHERE u.cccd_profile IS NOT NULL
-      AND jsonb_typeof(u.cccd_profile) = 'object'
-      AND u.cccd_profile <> '{}'::jsonb
-      AND NOT EXISTS (SELECT 1 FROM tblCccdProfile p WHERE p.user_id = u.id);
-END $$;
+-- Migration: chuyển tblUser.cccd_profile → tblCccdProfile đã được thực hiện
+-- một lần duy nhất khi deploy. Đoạn INSERT tự động bị xoá (DEF-07) vì mỗi lần
+-- khởi động lại server sẽ tạo lại profile đã xoá.
+-- Để migrate thủ công một lần: chạy backend/migrate_now.sql.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Seed: 3 loại biểu mẫu (khớp kFormTypes phía frontend)
@@ -318,10 +310,4 @@ VALUES
      ),
      NULL)
 
-ON CONFLICT (slug) DO UPDATE SET
-    name            = EXCLUDED.name,
-    description     = EXCLUDED.description,
-    requires_front  = EXCLUDED.requires_front,
-    requires_back   = EXCLUDED.requires_back,
-    required_fields = EXCLUDED.required_fields,
-    layout          = EXCLUDED.layout;
+ON CONFLICT (slug) DO NOTHING;

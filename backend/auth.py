@@ -66,7 +66,8 @@ class RegisterBody(BaseModel):
 class LoginBody(BaseModel):
     identifier: str = Field(max_length=255)
     password: str = Field(max_length=128)
-    device_info: Optional[str] = None
+    # DEF-05: giới hạn 255 ký tự để tránh lỗi 500 khi client gửi UA dài
+    device_info: Optional[str] = Field(default=None, max_length=255)
 
 
 class RefreshBody(BaseModel):
@@ -88,9 +89,12 @@ def _validate_password(password: str) -> Optional[str]:
 
 
 def _client_meta(request: Request) -> tuple[str, str]:
-    """(ip_address, device_info) cho audit + refresh token."""
+    """(ip_address, device_info) cho audit + refresh token.
+    DEF-05: cắt device_info về 255 ký tự để tránh lỗi 500 khi UA dài."""
     ip = request.client.host if request.client else None
     device = request.headers.get("user-agent")
+    if device:
+        device = device[:255]
     return ip, device
 
 
@@ -118,9 +122,12 @@ def _issue_tokens(
 
 
 def _find_user_by_identifier(identifier: str) -> Optional[dict]:
-    """Email hoặc username → user. Nếu chứa '@' coi là email."""
+    """Email hoặc username → user.
+    DEF-13: lowercase email trước khi so sánh để đăng nhập không phân biệt hoa/thường.
+    DEF-14: identifier đã được strip() trước khi gọi hàm này.
+    """
     if "@" in identifier:
-        return db.fetch_one("SELECT * FROM tblUser WHERE email = %s", (identifier,))
+        return db.fetch_one("SELECT * FROM tblUser WHERE email = %s", (identifier.lower(),))
     return db.fetch_one("SELECT * FROM tblUser WHERE username = %s", (identifier,))
 
 
@@ -132,15 +139,24 @@ def register(body: RegisterBody, request: Request) -> dict:
 
     Body: {username, email, password, full_name}
     """
-    if not EMAIL_RE.match(body.email):
+    # DEF-14: trim trước khi validate để tránh chấp nhận username toàn dấu cách.
+    username = body.username.strip()
+    email = body.email.strip().lower()
+    full_name = body.full_name.strip()
+
+    # Validate sau khi đã trim
+    if not username:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập không được rỗng")
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập phải có ít nhất 3 ký tự")
+    # DEF-14: chặn username chứa @ để tránh nhầm lẫn với email khi đăng nhập
+    if "@" in username:
+        raise HTTPException(status_code=400, detail="Tên đăng nhập không được chứa ký tự @")
+    if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Email không hợp lệ")
     pw_err = _validate_password(body.password)
     if pw_err:
         raise HTTPException(status_code=400, detail=pw_err)
-
-    username = body.username.strip()
-    email = body.email.strip().lower()
-    full_name = body.full_name.strip()
 
     exists = db.fetch_one(
         "SELECT id FROM tblUser WHERE username = %s OR email = %s",

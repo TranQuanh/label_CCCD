@@ -60,9 +60,12 @@ def _jsonb(value) -> Optional[str]:
 
 
 def _client_meta(request: Request) -> tuple[Optional[str], Optional[str]]:
-    """(ip_address, device_info) cho audit."""
+    """(ip_address, device_info) cho audit.
+    DEF-05: cắt device về 255 ký tự để tránh lỗi 500 khi UA dài."""
     ip = request.client.host if request.client else None
     device = request.headers.get("user-agent")
+    if device:
+        device = device[:255]
     return ip, device
 
 

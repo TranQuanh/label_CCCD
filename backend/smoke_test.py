@@ -31,7 +31,8 @@ os.environ.setdefault("JWT_SECRET", "smoke-test-secret-key")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import app  # noqa: E402
+# DEF-22: shim app/ đã bị xoá — import trực tiếp từ backend.main
+from backend.main import app  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -48,14 +49,22 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def main() -> None:
-    # Dọn dữ liệu test còn sót từ lần chạy trước (không đụng seed tblFormType;
-    # chỉ xoá biểu mẫu P2 do test tạo ra để lần chạy sau không trùng slug).
+    # DEF-22: TRUNCATE an toàn — chỉ xoá dữ liệu test, không xoá seed tblFormType.
+    # Thêm tblCccdProfile trước tblUser để tránh FK violation.
+    # Dùng biến môi trường DATABASE_URL — không hardcode DB dev mặc định.
     import psycopg
 
-    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-        conn.execute("TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, tblUser CASCADE")
-        conn.execute("DELETE FROM tblFormType WHERE slug = 'work_permit'")
-        conn.commit()
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        print("  [SKIP] DATABASE_URL không được đặt — bỏ qua bước dọn DB")
+    else:
+        with psycopg.connect(db_url) as conn:
+            conn.execute(
+                "TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, "
+                "tblCccdProfile, tblUser CASCADE"
+            )
+            conn.execute("DELETE FROM tblFormType WHERE slug = 'work_permit'")
+            conn.commit()
 
     # `with` để TestClient kích hoạt lifespan (init_db + Redis).
     with TestClient(app) as client:
@@ -176,6 +185,7 @@ def _run(client: TestClient) -> None:
 
     print("== P1: Admin — tạo user + đổi role → invalidate token ==")
     # Đăng ký admin thủ công qua SQL (chưa có endpoint seed admin).
+    # DEF-22: import từ backend trực tiếp, không qua shim app/
     from backend.security import hash_password
     admin_id = None
     import psycopg

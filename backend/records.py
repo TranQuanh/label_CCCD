@@ -82,10 +82,14 @@ class VisibilityBody(BaseModel):
 
 
 class UpdateRecordBody(BaseModel):
-    """Body cho PATCH /scan-records/{id} — cập nhật thông tin đã trích xuất."""
+    """Body cho PATCH /scan-records/{id} — cập nhật thông tin đã trích xuất.
+
+    DEF-15: supp và parse_ok là Optional — chỉ ghi đè khi client truyền rõ ràng.
+    Nếu không truyền supp thì giữ nguyên giá trị cũ trong DB.
+    """
     extracted_data: dict[str, Any] = Field(default_factory=dict)
-    supp: dict[str, str] = Field(default_factory=dict)
-    parse_ok: bool = True
+    supp: Optional[dict[str, str]] = None   # None = giữ nguyên giá trị cũ
+    parse_ok: Optional[bool] = None         # None = giữ nguyên giá trị cũ
     is_edited: bool = True
 
 
@@ -242,11 +246,21 @@ def update_record(
     ip = request.client.host if request.client else None
     device = request.headers.get("user-agent")
 
+    # DEF-15: chỉ ghi đè supp/parse_ok khi client truyền rõ ràng (không None).
+    # Dùng COALESCE để giữ nguyên giá trị cũ nếu tham số là NULL.
     db.execute(
-        "UPDATE tblScanRecord SET extracted_data = %s, supp = %s, "
-        "parse_ok = %s, is_edited = %s, updated_at = NOW() WHERE id = %s",
-        (_jsonb(body.extracted_data), _jsonb(body.supp),
-         body.parse_ok, body.is_edited, record_id),
+        "UPDATE tblScanRecord SET "
+        "extracted_data = %s, "
+        "supp = COALESCE(%s, supp), "
+        "parse_ok = COALESCE(%s, parse_ok), "
+        "is_edited = %s, "
+        "updated_at = NOW() "
+        "WHERE id = %s",
+        (_jsonb(body.extracted_data),
+         _jsonb(body.supp) if body.supp is not None else None,
+         body.parse_ok,
+         body.is_edited,
+         record_id),
     )
 
     audit(user["id"], "record.update", "record", record_id,
