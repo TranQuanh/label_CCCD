@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # =============================================================================
 # label_CCCD — .gitignore gộp (Python ML + FastAPI backend + Flutter frontend)
 # Pattern có "/" ở đầu = chỉ khớp ở root. KHÔNG bỏ "/" ở các thư mục dữ liệu:
@@ -9,6 +10,12 @@
 /result/
 /checkpoints/
 /models/
+=======
+# Data & artifacts (KHÔNG commit ảnh CCCD / nhãn / checkpoint)
+# data/
+result/
+checkpoints/
+>>>>>>> 8593503 (add data)
 *.jsonl
 *.log
 .checkpoint_*.json
