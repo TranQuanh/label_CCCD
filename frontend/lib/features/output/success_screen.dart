@@ -162,9 +162,7 @@ class _SuccessScreenState extends State<SuccessScreen> {
                   child: ElevatedButton(
                     onPressed: () => Navigator.of(context).pushAndRemoveUntil(
                       MaterialPageRoute<void>(
-                          // 0 = tab Biểu mẫu. Trước đây để 1, mà sau khi thêm
-                          // tab Profile thì 1 là Profile → "Về trang chủ" mở nhầm.
-                          builder: (_) => const HomeShell(initialIndex: 0)),
+                          builder: (_) => const HomeShell(initialIndex: 1)),
                       (r) => false,
                     ),
                     style: ElevatedButton.styleFrom(
