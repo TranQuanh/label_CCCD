@@ -1,5 +1,5 @@
 # Data & artifacts (KHÔNG commit ảnh CCCD / nhãn / checkpoint)
-data/
+# data/
 result/
 checkpoints/
 *.jsonl
