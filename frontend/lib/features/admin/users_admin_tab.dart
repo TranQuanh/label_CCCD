@@ -54,7 +54,7 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-              'Đã đổi vai trò của ${user['username']} sang $newRole — người dùng phải đăng nhập lại.')));
+              'Đã đổi vai trò của ${user['username']} sang ${_roleLabel(newRole)} — người dùng phải đăng nhập lại.')));
       await _load();
     } on ApiException catch (e) {
       if (mounted) {
@@ -69,14 +69,19 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
     }
   }
 
+  /// Nhãn hiển thị của role (chỉ còn 2 role: admin, user).
+  static String _roleLabel(String role) =>
+      role == 'admin' ? 'Quản trị viên' : 'Người dùng';
+
   Future<void> _toggleActive(Map<String, dynamic> user) async {
+    // target = trạng thái is_active MỚI: false → khóa, true → mở khóa.
     final target = !(user['is_active'] as bool? ?? true);
-    final label = target ? 'khóa' : 'mở khóa';
+    final label = target ? 'mở khóa' : 'khóa';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('${target ? 'Khóa' : 'Mở khóa'} tài khoản?'),
-        content: Text('Tài khoản "${user['username']}" sẽ bị ${target ? 'khóa' : 'mở'}.\n'
+        title: Text('${target ? 'Mở khóa' : 'Khóa'} tài khoản?'),
+        content: Text('Tài khoản "${user['username']}" sẽ được ${target ? 'mở khóa' : 'khóa'}.\n'
             'Phiên hiện tại của người dùng bị vô hiệu hóa.'),
         actions: [
           TextButton(
@@ -199,7 +204,7 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
                     : AppColors.tint,
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: Text(role,
+              child: Text(_roleLabel(role),
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -235,8 +240,8 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
                       borderRadius: BorderRadius.circular(10)),
                 ),
                 items: const [
-                  DropdownMenuItem(value: 'admin', child: Text('admin')),
-                  DropdownMenuItem(value: 'user', child: Text('user')),
+                  DropdownMenuItem(value: 'admin', child: Text('Quản trị viên')),
+                  DropdownMenuItem(value: 'user', child: Text('Người dùng')),
                 ],
                 onChanged: isSelf
                     ? null
