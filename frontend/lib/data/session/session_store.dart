@@ -37,6 +37,8 @@ class SessionStore extends ChangeNotifier {
 
   // Xoá cờ masked vì không cần che số CCCD
   bool _loadingRecords = false;
+  // Lỗi lần tải lịch sử hồ sơ gần nhất (null = không lỗi).
+  String? _recordsError;
   bool _loadingForms = false;
   bool _loadingProfiles = false;
   // Lần nạp profile đang chạy dở (tránh nạp/migration chạy 2 lần song song).
@@ -45,6 +47,22 @@ class SessionStore extends ChangeNotifier {
   // Lần nạp thấy phiên bản đổi giữa chừng thì bỏ kết quả nạp, tránh
   // ghi đè profile vừa lưu bằng danh sách cũ.
   int _profilesVersion = 0;
+  // Đang xử lý hết phiên (nhiều request 401 cùng lúc chỉ xử lý một lần).
+  bool _expiring = false;
+  // Thông báo cho UI khi phiên kết thúc KHÔNG do người dùng bấm đăng xuất
+  // (hết hạn / đổi mật khẩu). main.dart đọc qua [takeSessionEndMessage].
+  String? _sessionEndMessage;
+
+  static const sessionExpiredMsg =
+      'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+
+  SessionStore() {
+    // Hook dùng chung cho MỌI AuthApiClient (kể cả các tab admin tự tạo
+    // instance riêng): refresh thất bại → xoá phiên cục bộ.
+    AuthApiClient.onSessionExpired = () {
+      expireSession();
+    };
+  }
 
   AuthUser? get user => _user;
 
@@ -69,6 +87,9 @@ class SessionStore extends ChangeNotifier {
   // Xoá getter reviewQueue
   // Xoá getter masked
   bool get loadingRecords => _loadingRecords;
+
+  /// Thông báo lỗi lần tải lịch sử hồ sơ gần nhất; null nếu tải thành công.
+  String? get recordsError => _recordsError;
   bool get loadingForms => _loadingForms;
   bool get loadingProfiles => _loadingProfiles;
 
@@ -99,14 +120,26 @@ class SessionStore extends ChangeNotifier {
     if (refresh == null) return false;
     try {
       final access = await _auth.refreshAccessToken();
-      if (access == null) return false;
+      if (access == null) {
+        // Server từ chối refresh token (401/403) → token chết hẳn, xoá.
+        await TokenStore.clear();
+        return false;
+      }
       final user = await _auth.me();
       _user = user;
       await loadProfiles();
       notifyListeners();
       return true;
-    } catch (_) {
-      await TokenStore.clear();
+    } on ApiException catch (e) {
+      // Chỉ xoá token khi server khẳng định phiên không còn hợp lệ.
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        await TokenStore.clear();
+      }
+      return false;
+    } catch (e) {
+      // Lỗi mạng/timeout: GIỮ token — lần mở app sau (có mạng) vẫn tự đăng
+      // nhập được; lần này người dùng thấy màn đăng nhập.
+      debugPrint('Tự đăng nhập thất bại do lỗi kết nối, giữ token: $e');
       return false;
     }
   }
@@ -157,21 +190,67 @@ class SessionStore extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    // Lấy id TRƯỚC khi xoá _user — key cache profile theo user.
-    final uid = _user?.id;
-    if (!ApiConfig.useMock) {
-      await _auth.logout(); // thu hồi refresh + blacklist access
-      // Thật: server là nguồn chân lý → xoá cache profile của user này trên máy
-      // (đăng nhập lại sẽ tải lại từ server).
-      await TokenStore.deleteProfiles(uid);
+    // Chặn expireSession trong lúc đăng xuất: request nền 401 giữa các await
+    // không được đặt thông báo "Phiên đã hết hạn" (gây điều hướng 2 lần).
+    _expiring = true;
+    try {
+      // Lấy id TRƯỚC khi xoá _user — key cache profile theo user.
+      final uid = _user?.id;
+      if (!ApiConfig.useMock) {
+        await _auth.logout(); // thu hồi refresh + blacklist access
+        // Thật: server là nguồn chân lý → xoá cache profile của user này trên
+        // máy (đăng nhập lại sẽ tải lại từ server).
+        await TokenStore.deleteProfiles(uid);
+      }
+      // Mock: KHÔNG đụng storage — profile chỉ sống ở máy, giữ cho lần sau.
+      _profilesVersion++; // lần nạp profile đang dở (nếu có) không ghi đè nữa
+      _user = null;
+      _profiles = [];
+      _records.clear();
+      _recordsError = null;
+      _forms.clear();
+      notifyListeners();
+    } finally {
+      _expiring = false;
     }
-    // Mock: KHÔNG đụng storage — profile chỉ sống ở máy, giữ cho lần sau.
-    _profilesVersion++; // lần nạp profile đang dở (nếu có) không ghi đè nữa
-    _user = null;
-    _profiles = [];
-    _records.clear();
-    _forms.clear();
-    notifyListeners();
+  }
+
+  /// Kết thúc phiên cục bộ khi token đã chết (refresh bị từ chối, đổi mật
+  /// khẩu, bị admin khoá/đổi role). KHÔNG gọi API logout — token đã vô hiệu.
+  ///
+  /// [message]: thông báo hiển thị ở màn đăng nhập (main.dart điều hướng).
+  Future<void> expireSession({String message = sessionExpiredMsg}) async {
+    // Chưa vào phiên (vd. đang auto-login — tryAutoLogin tự xoá token khi
+    // 401/403) hoặc đã xử lý rồi → bỏ qua; tránh request 401 đến muộn xoá
+    // token của lần đăng nhập mới.
+    if (_expiring || _user == null) return;
+    _expiring = true;
+    try {
+      final uid = _user?.id;
+      await TokenStore.clear();
+      // Mock: giữ cache profile trên máy như logout().
+      if (!ApiConfig.useMock && uid != null) {
+        await TokenStore.deleteProfiles(uid);
+      }
+      _profilesVersion++; // lần nạp profile đang dở (nếu có) không ghi đè nữa
+      _user = null;
+      _profiles = [];
+      _records.clear();
+      _recordsError = null;
+      _forms.clear();
+      _sessionEndMessage = message;
+      notifyListeners();
+    } finally {
+      _expiring = false;
+    }
+  }
+
+  /// Lấy (và xoá) thông báo kết thúc phiên do hết hạn; null nếu là đăng xuất
+  /// thường (màn Tài khoản tự điều hướng).
+  String? takeSessionEndMessage() {
+    final m = _sessionEndMessage;
+    _sessionEndMessage = null;
+    return m;
   }
 
   // ── Profile CCCD người dùng ─────────────────────────────────────────────
@@ -541,6 +620,10 @@ class SessionStore extends ChangeNotifier {
   }
 
   /// Tải lịch sử hồ sơ từ PostgreSQL (real).
+  ///
+  /// Không ném lỗi ra ngoài (nơi gọi dùng `unawaited`): lỗi được ghi vào
+  /// [recordsError] để tab Hồ sơ hiện thông báo + nút Thử lại; danh sách cũ
+  /// giữ nguyên.
   Future<void> loadRecords() async {
     if (ApiConfig.useMock) return; // mock dùng dữ liệu seed sẵn
     _loadingRecords = true;
@@ -551,6 +634,14 @@ class SessionStore extends ChangeNotifier {
       _records
         ..clear()
         ..addAll(list);
+      _recordsError = null;
+    } on ApiException catch (e) {
+      // 401 = phiên hết hạn: expireSession đã xử lý (về màn đăng nhập), không
+      // để lại lỗi cũ cho lần đăng nhập sau.
+      if (e.statusCode != 401) _recordsError = e.userMessage;
+    } catch (e) {
+      debugPrint('Không tải được lịch sử hồ sơ: $e');
+      _recordsError = _recordsNetworkErrorMsg;
     } finally {
       _loadingRecords = false;
       notifyListeners();
@@ -615,6 +706,9 @@ class SessionStore extends ChangeNotifier {
       newPassword: newPassword,
     );
   }
+
+  static const _recordsNetworkErrorMsg =
+      'Không tải được hồ sơ. Kiểm tra kết nối rồi thử lại.';
 
   static String _today() {
     final now = DateTime.now();

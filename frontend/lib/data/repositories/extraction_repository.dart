@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 import '../../core/config/api_config.dart';
 import '../api/cccd_api_client.dart';
 import '../models/id_card.dart';
@@ -95,13 +93,11 @@ class ExtractionRepository {
 
     if (frontPath != null) {
       final res = await _api.extract(frontPath, ApiConfig.sideFront);
-      // In log dữ liệu thô mặt trước để debug nếu cần
-      debugPrint('👉 RAW FRONT RESPONSE: ${res.data}');
+      // KHÔNG log res.data: chứa số CCCD, họ tên, địa chỉ (debugPrint vẫn chạy ở release).
       _mergeInto(card, res.data, frontKeyMap);
     }
     if (backPath != null) {
       final res = await _api.extract(backPath, ApiConfig.sideBack);
-      debugPrint('👉 RAW BACK RESPONSE: ${res.data}');
       _mergeInto(card, res.data, backKeyMap);
     }
     return card;

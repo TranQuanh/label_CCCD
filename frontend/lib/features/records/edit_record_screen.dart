@@ -408,18 +408,23 @@ class _EditRecordScreenState extends State<EditRecordScreen> {
           20, MediaQuery.of(context).padding.top + 12, 20, 16),
       child: Row(
         children: [
-          InkWell(
-            onTap: _back,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(10),
+          // DEF-35: nhãn cho trình đọc màn hình.
+          Semantics(
+            button: true,
+            label: 'Quay lại',
+            child: InkWell(
+              onTap: _back,
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
               ),
-              child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
             ),
           ),
           const SizedBox(width: 14),

@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .audit import audit
-from .deps import ROLE_LEVELS, require_admin
+from .auth import _validate_username
+from .deps import ROLE_LEVELS, parse_uuid, require_admin
 from .security import hash_password
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class CreateUserBody(BaseModel):
 
 
 class UpdateUserBody(BaseModel):
-    full_name: Optional[str] = None
+    full_name: Optional[str] = Field(default=None, max_length=255)
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
@@ -87,8 +88,15 @@ def create_user(body: CreateUserBody, request: Request, admin: dict = Depends(re
 
     username = body.username.strip()
     email = body.email.strip().lower()
+    # DEF-14: cùng quy tắc tên đăng nhập với /auth/register.
+    un_err = _validate_username(username)
+    if un_err:
+        raise HTTPException(status_code=400, detail=un_err)
+    # DEF-13/14: kiểm trùng không phân biệt hoa thường (bằng truy vấn).
     exists = db.fetch_one(
-        "SELECT id FROM tblUser WHERE username = %s OR email = %s", (username, email)
+        "SELECT id FROM tblUser WHERE lower(username) = lower(%s) "
+        "OR lower(email) = lower(%s)",
+        (username, email),
     )
     if exists:
         raise HTTPException(status_code=409, detail="Tên đăng nhập hoặc email đã tồn tại")
@@ -111,6 +119,11 @@ def update_user(
     admin: dict = Depends(require_admin),
 ) -> dict:
     """Admin sửa role/full_name/khóa mở + reset mật khẩu."""
+    # DEF-23: id sai định dạng UUID → 404 thay vì lỗi 500 từ PostgreSQL.
+    parsed_id = parse_uuid(user_id)
+    if parsed_id is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản")
+    user_id = parsed_id
     target = db.fetch_one("SELECT * FROM tblUser WHERE id = %s", (user_id,))
     if target is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản")
@@ -120,8 +133,13 @@ def update_user(
         raise HTTPException(status_code=400, detail=f"Role không hợp lệ (chấp nhận: {', '.join(VALID_ROLES)})")
 
     # Không cho admin tự hạ quyền chính mình.
-    if user_id == admin["id"] and body.role is not None and body.role != "admin":
+    # (psycopg trả cột UUID dạng uuid.UUID → so sánh dạng chuỗi.)
+    is_self = str(user_id) == str(admin["id"])
+    if is_self and body.role is not None and body.role != "admin":
         raise HTTPException(status_code=400, detail="Không thể hạ quyền của chính bạn")
+    # Không cho admin tự khóa chính mình.
+    if is_self and body.is_active is False:
+        raise HTTPException(status_code=400, detail="Không thể khóa tài khoản của chính bạn")
 
     # Không cho vô hiệu hóa / hạ quyền admin cuối cùng.
     if target["role"] == "admin" and target["is_active"]:
@@ -140,7 +158,7 @@ def update_user(
         params.append(body.full_name.strip())
     if body.password is not None:
         if len(body.password) < 8:
-            raise HTTPException(status_code=400, detail="Mật khẩu phải me ít nhất 8 ký tự")
+            raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 8 ký tự")
         updates.append("password_hash = %s")
         params.append(hash_password(body.password))
     if body.role is not None and body.role != target["role"]:
@@ -149,6 +167,11 @@ def update_user(
     if body.is_active is not None and body.is_active != target["is_active"]:
         updates.append("is_active = %s")
         params.append(body.is_active)
+    # DEF-16: admin mở khóa (is_active=True) → xoá luôn bộ đếm sai mật khẩu và
+    # khóa tạm, để người dùng đăng nhập lại từ đầu.
+    if body.is_active is True:
+        updates.append("failed_login_count = 0")
+        updates.append("locked_until = NULL")
 
     if updates:
         updates.append("updated_at = NOW()")
@@ -157,15 +180,18 @@ def update_user(
             [*params, user_id],
         )
 
-    # Role đổi, khóa, HOẶC reset mật khẩu → vô hiệu toàn bộ phiên của người đó.
+    # Role đổi hoặc khóa → vô hiệu toàn bộ phiên của người đó.
     changed_privilege = (
         (body.role is not None and body.role != target["role"])
         or (body.is_active is not None and body.is_active != target["is_active"])
-        or (body.password is not None)
     )
     if changed_privilege:
         _revoke_tokens(user_id)
 
     ip = request.client.host if request.client else None
-    audit(admin["id"], "user.update", "user", user_id, body.model_dump(exclude_none=True), ip)
+    # Không bao giờ ghi mật khẩu (dạng rõ) vào audit log — chỉ đánh dấu có reset.
+    meta = body.model_dump(exclude_none=True, exclude={"password"})
+    if body.password is not None:
+        meta["password_reset"] = True
+    audit(admin["id"], "user.update", "user", user_id, meta, ip)
     return {"message": "Đã cập nhật tài khoản"}

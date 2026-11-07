@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/config/api_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/temp_file_cleaner.dart';
 import '../../data/api/api_exception.dart';
 import '../../data/models/form_type.dart';
 import '../../data/repositories/extraction_repository.dart';
@@ -42,6 +45,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
 
   String? _error;
   bool _running = false;
+  // Ảnh tạm đã xoá chưa (xoá đúng một lần: khi thành công hoặc khi rời màn).
+  bool _imagesDeleted = false;
   int _attempt = 0;
 
   @override
@@ -54,7 +59,17 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   void dispose() {
     // Chỉ đóng client nếu chính màn này tạo ra nó.
     if (widget.repository == null) _repo.dispose();
+    // Rời màn mà chưa trích xuất thành công (Chụp lại / Back) → không còn cần
+    // ảnh để Thử lại nữa, xoá luôn.
+    unawaited(_deleteTempImages());
     super.dispose();
+  }
+
+  /// Xoá 2 ảnh CCCD tạm (chỉ file trong cache/tmp của app, an toàn cho web).
+  Future<void> _deleteTempImages() async {
+    if (_imagesDeleted) return;
+    _imagesDeleted = true;
+    await deleteTempImages([widget.frontPath, widget.backPath]);
   }
 
   Future<void> _run() async {
@@ -68,6 +83,11 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         frontPath: widget.frontPath,
         backPath: widget.backPath,
       );
+      if (!mounted) return;
+
+      // Trích xuất xong → ảnh CCCD tạm không còn cần, xoá trước khi điều hướng.
+      // (Lỗi thì giữ ảnh để nút Thử lại dùng lại.)
+      await _deleteTempImages();
       if (!mounted) return;
 
       // KHÔNG lưu profile ở đây: chỉ lưu khi người dùng kiểm tra rồi bấm Lưu
@@ -133,19 +153,24 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
             Positioned(
               top: 8,
               left: 16,
-              child: InkWell(
-                onTap: () => Navigator.of(context).maybePop(),
-                customBorder: const CircleBorder(),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .12),
-                    shape: BoxShape.circle,
+              // DEF-35: nhãn cho trình đọc màn hình.
+              child: Semantics(
+                button: true,
+                label: 'Quay lại',
+                child: InkWell(
+                  onTap: () => Navigator.of(context).maybePop(),
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        color: Colors.white, size: 20),
                   ),
-                  child: const Icon(Icons.arrow_back,
-                      color: Colors.white, size: 20),
                 ),
               ),
             ),

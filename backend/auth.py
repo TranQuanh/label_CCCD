@@ -16,7 +16,6 @@ Quy tắc bảo mật (khớp tài liệu):
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -26,7 +25,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from . import config, db, redis_client
-from .audit import audit
+from .audit import DEVICE_INFO_MAX_LEN, IP_MAX_LEN, audit, clip
 from .deps import get_current_user
 from .security import (
     create_access_token,
@@ -42,6 +41,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Email tối thiểu hợp lệ (đủ chặt để chặn rác, không quá chặt cho miền quốc tế).
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# DEF-14: tên đăng nhập khớp client (`Validators.username` trong
+# lib/core/validation/validators.dart): 3–32 ký tự, chữ/số/_, bắt đầu bằng chữ.
+USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+USERNAME_MSG = "Tên đăng nhập 3–32 ký tự (chữ/số/_), bắt đầu bằng chữ"
 
 
 # Hash mật khẩu "dummy" cố định — dùng khi user không tồn tại để thời gian phản
@@ -87,10 +91,19 @@ def _validate_password(password: str) -> Optional[str]:
     return None
 
 
+def _validate_username(username: str) -> Optional[str]:
+    """Kiểm tra tên đăng nhập (đã strip) khi đăng ký/tạo tài khoản. Trả thông
+    báo lỗi hoặc None. Đăng nhập KHÔNG kiểm (tài khoản cũ vẫn vào được)."""
+    if not (3 <= len(username) <= 32) or not USERNAME_RE.match(username):
+        return USERNAME_MSG
+    return None
+
+
 def _client_meta(request: Request) -> tuple[str, str]:
     """(ip_address, device_info) cho audit + refresh token."""
-    ip = request.client.host if request.client else None
-    device = request.headers.get("user-agent")
+    # DEF-05: cắt ngắn cho vừa cột VARCHAR(45)/VARCHAR(255) (tránh lỗi 500).
+    ip = clip(request.client.host if request.client else None, IP_MAX_LEN)
+    device = clip(request.headers.get("user-agent"), DEVICE_INFO_MAX_LEN)
     return ip, device
 
 
@@ -118,9 +131,15 @@ def _issue_tokens(
 
 
 def _find_user_by_identifier(identifier: str) -> Optional[dict]:
-    """Email hoặc username → user. Nếu chứa '@' coi là email."""
+    """Email hoặc username → user. Nếu chứa '@' coi là email.
+
+    DEF-13: email so không phân biệt hoa thường (người dùng gõ chữ hoa vẫn vào
+    được). Username giữ so khớp chính xác để không khớp nhầm hai tài khoản cũ
+    chỉ khác hoa/thường."""
     if "@" in identifier:
-        return db.fetch_one("SELECT * FROM tblUser WHERE email = %s", (identifier,))
+        return db.fetch_one(
+            "SELECT * FROM tblUser WHERE lower(email) = lower(%s)", (identifier,)
+        )
     return db.fetch_one("SELECT * FROM tblUser WHERE username = %s", (identifier,))
 
 
@@ -141,9 +160,15 @@ def register(body: RegisterBody, request: Request) -> dict:
     username = body.username.strip()
     email = body.email.strip().lower()
     full_name = body.full_name.strip()
+    un_err = _validate_username(username)
+    if un_err:
+        raise HTTPException(status_code=400, detail=un_err)
 
+    # DEF-13/14: kiểm trùng không phân biệt hoa thường (bằng truy vấn, không
+    # thêm index/constraint).
     exists = db.fetch_one(
-        "SELECT id FROM tblUser WHERE username = %s OR email = %s",
+        "SELECT id FROM tblUser WHERE lower(username) = lower(%s) "
+        "OR lower(email) = lower(%s)",
         (username, email),
     )
     if exists:
@@ -196,8 +221,9 @@ def login(body: LoginBody, request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Sai tên đăng nhập hoặc mật khẩu")
 
     # Khóa tài khoản
-    if user["locked_until"] and user["locked_until"] > _now_naive():
-        remaining = user["locked_until"] - _now_naive()
+    now = _now_naive()
+    if user["locked_until"] and user["locked_until"] > now:
+        remaining = user["locked_until"] - now
         minutes = max(1, int(remaining.total_seconds() // 60))
         raise HTTPException(
             status_code=423,
@@ -206,23 +232,22 @@ def login(body: LoginBody, request: Request) -> dict:
     if not user["is_active"]:
         raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
 
+    # DEF-16: khóa đã hết hạn → bắt đầu đếm lại từ 0 (sai 1 lần sau khi hết
+    # khóa chỉ là lần sai thứ 1, không bị khóa lại ngay). Lần ghi bên dưới
+    # (sai hoặc đúng mật khẩu) đều đặt lại locked_until.
+    prev_fails = user["failed_login_count"] or 0
+    if user["locked_until"] is not None:
+        prev_fails = 0
+
     if not verify_password(body.password, user["password_hash"]):
-        # Dùng SQL atomic để tránh lost-update khi nhiều request đăng nhập song song.
+        fails = prev_fails + 1
         locked_until = None
-        row = db.fetch_one(
-            "UPDATE tblUser "
-            "SET failed_login_count = failed_login_count + 1 "
-            "WHERE id = %s "
-            "RETURNING failed_login_count, locked_until",
-            (user["id"],),
-        )
-        fails = row["failed_login_count"] if row else 1
         if fails >= config.MAX_LOGIN_FAILS:
             locked_until = _now_naive() + timedelta(minutes=config.LOCK_MINUTES)
-            db.execute(
-                "UPDATE tblUser SET locked_until = %s WHERE id = %s",
-                (locked_until, user["id"]),
-            )
+        db.execute(
+            "UPDATE tblUser SET failed_login_count = %s, locked_until = %s WHERE id = %s",
+            (fails, locked_until, user["id"]),
+        )
         audit(user["id"], "auth.login_failed", "user", user["id"],
               {"attempt": fails}, ip, device)
         if locked_until:
@@ -238,15 +263,17 @@ def login(body: LoginBody, request: Request) -> dict:
         "UPDATE tblUser SET failed_login_count = 0, locked_until = NULL WHERE id = %s",
         (user["id"],),
     )
+    # device_info client gửi có thể dài → cắt ngắn thay vì từ chối đăng nhập.
+    login_device = clip(body.device_info, DEVICE_INFO_MAX_LEN) or device
     with db.get_conn() as conn:
         fresh = conn.execute(
             "SELECT * FROM tblUser WHERE id = %s", (user["id"],)
         ).fetchone()
-        tokens = _issue_tokens(conn, fresh, body.device_info or device, ip)
+        tokens = _issue_tokens(conn, fresh, login_device, ip)
         conn.commit()
 
     audit(user["id"], "auth.login", "user", user["id"],
-          {"identifier": identifier, "device": body.device_info or device}, ip, device)
+          {"identifier": identifier, "device": login_device}, ip, device)
     return {
         "message": "Đăng nhập thành công",
         "data": {
@@ -340,52 +367,8 @@ def me(user: dict = Depends(get_current_user)) -> dict:
     }
 
 
-@router.get("/profile")
-def get_profile(user: dict = Depends(get_current_user)) -> dict:
-    """Lấy thông tin profile CCCD đã lưu của user.
-
-    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
-    """
-    row = db.fetch_one("SELECT cccd_profile FROM tblUser WHERE id = %s", (user["id"],))
-    prof = row.get("cccd_profile") if row else None
-    if isinstance(prof, str):
-        try:
-            prof = json.loads(prof)
-        except Exception:
-            pass
-    return {"profile": prof}
-
-
-@router.put("/profile")
-def update_profile(body: dict, request: Request, user: dict = Depends(get_current_user)) -> dict:
-    """Cập nhật thông tin profile CCCD của user.
-
-    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
-    """
-    ip, device = _client_meta(request)
-    data = body.get("profile", body)
-    prof_json = json.dumps(data) if data else None
-    db.execute(
-        "UPDATE tblUser SET cccd_profile = %s, updated_at = NOW() WHERE id = %s",
-        (prof_json, user["id"]),
-    )
-    audit(user["id"], "profile.update", "user", user["id"], None, ip, device)
-    return {"message": "Cập nhật profile thành công", "profile": data}
-
-
-@router.delete("/profile")
-def delete_profile(request: Request, user: dict = Depends(get_current_user)) -> dict:
-    """Xóa thông tin profile CCCD của user.
-
-    DEPRECATED — dùng /api/v1/profiles (bảng tblCccdProfile). Giữ lại để tương thích bản app cũ.
-    """
-    ip, device = _client_meta(request)
-    db.execute(
-        "UPDATE tblUser SET cccd_profile = NULL, updated_at = NOW() WHERE id = %s",
-        (user["id"],),
-    )
-    audit(user["id"], "profile.delete", "user", user["id"], None, ip, device)
-    return {"message": "Đã xóa profile thành công"}
+# DEF-07: đã bỏ GET/PUT/DELETE /auth/profile (DEPRECATED, ghi vào cột cũ
+# tblUser.cccd_profile) — Profile CCCD dùng /api/v1/profiles (tblCccdProfile).
 
 
 @router.post("/change-password")
@@ -395,9 +378,10 @@ def change_password(
     user: dict = Depends(get_current_user),
 ) -> dict:
     """
-    Đổi mật khẩu: xác minh mật khẩu hiện tại, đặt mật khẩu mới, thu hồi mọi
-    phiên khác (bump token_version + revoke refresh token) — token hiện tại vẫn
-    dùng được tới khi hết hạn.
+    Đổi mật khẩu: xác minh mật khẩu hiện tại, đặt mật khẩu mới, thu hồi MỌI
+    phiên kể cả phiên hiện tại (bump token_version + revoke refresh token) —
+    access token đang dùng bị từ chối ngay ở request kế tiếp (tok_ver lệch),
+    client phải đăng nhập lại bằng mật khẩu mới.
 
     P2 quyết định: KHÔNG dùng OTP (không có hạ tầng SMS/email thật) — chỉ cần
     người dùng chứng minh mật khẩu hiện tại.
@@ -415,16 +399,16 @@ def change_password(
     if body.current_password == body.new_password:
         raise HTTPException(status_code=400, detail="Mật khẩu mới trùng mật khẩu hiện tại")
 
-    # Đổi hash + tăng token_version → mọi JWT/refresh cũ của CÁC PHIÊN KHÁC bị
-    # vô hiệu. Phiên hiện tại tiếp tục sống (token_version không nằm trong
-    # kiểm tra của chính request này sau khi đổi — không ảnh hưởng tới trả lời).
+    # Đổi hash + tăng token_version → mọi access token cũ (KỂ CẢ token của
+    # phiên hiện tại) bị get_current_user từ chối từ request kế tiếp. Request
+    # này vẫn trả lời bình thường vì user đã được xác thực trước khi đổi.
     db.execute(
         "UPDATE tblUser SET password_hash = %s, token_version = token_version + 1, "
         "updated_at = NOW() WHERE id = %s",
         (hash_password(body.new_password), user["id"]),
     )
-    # Revoke các refresh token KHÁC phiên hiện tại. Cách đơn giản và an toàn:
-    # thu hồi hết refresh token đang sống (bắt buộc đăng nhập lại sau này).
+    # Thu hồi hết refresh token đang sống của user, kể cả của phiên hiện tại
+    # (bắt buộc đăng nhập lại trên mọi thiết bị).
     db.execute(
         "UPDATE tblRefreshToken SET revoked_at = NOW() "
         "WHERE user_id = %s AND revoked_at IS NULL AND expires_at > NOW()",

@@ -56,8 +56,12 @@ class SubmittedRecord {
 
   static String _formatDate(String? iso) {
     if (iso == null || iso.isEmpty) return '';
-    final dt = DateTime.tryParse(iso);
-    if (dt == null) return iso;
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return iso;
+    // DEF-25: server trả ISO UTC có offset ('+00:00') → đổi về giờ máy rồi mới
+    // lấy ngày (tránh lùi một ngày). Chuỗi không có offset (dữ liệu cũ/mock)
+    // được parse thành giờ địa phương sẵn, `toLocal()` giữ nguyên.
+    final dt = parsed.toLocal();
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
   }
 

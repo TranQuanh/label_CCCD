@@ -6,6 +6,7 @@
 -- Thay đổi so với phiên bản cũ:
 --   - Thêm tblCccdProfile (nhiều Profile CCCD / user, ngang hàng); chuyển dữ liệu
 --     tblUser.cccd_profile cũ sang bảng mới (cột cũ vẫn giữ, DEPRECATED)
+--   - Role chỉ còn 'admin' | 'user' (bỏ 'viewer', 'operator' → 'user'), có CHECK
 --   - Xoá tblBatchJob (chưa dùng, không có router)
 --   - Xoá cột confidence_scores khỏi tblScanRecord (luôn NULL, không dùng)
 --   - Xoá cột batch_job_id khỏi tblScanRecord (FK tới bảng đã xoá)
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tblUser (
     email              VARCHAR(255) NOT NULL UNIQUE,
     password_hash      VARCHAR(255) NOT NULL,
     full_name          VARCHAR(255),
-    role               VARCHAR(20)  NOT NULL DEFAULT 'user',
+    role               VARCHAR(20)  NOT NULL DEFAULT 'user',      -- 'admin' | 'user'
     is_active          BOOLEAN      NOT NULL DEFAULT TRUE,
     failed_login_count INT          NOT NULL DEFAULT 0,
     locked_until       TIMESTAMP,
@@ -49,6 +50,14 @@ BEGIN
         ALTER TABLE tblUser ADD COLUMN cccd_profile JSONB;
     END IF;
 END $$;
+
+-- Migration: chỉ còn 2 role 'admin' và 'user' (bỏ 'viewer', đổi 'operator' → 'user').
+-- Đổi dữ liệu cũ TRƯỚC rồi mới thêm CHECK; drop constraint cùng tên trước khi
+-- add để chạy lại nhiều lần không lỗi.
+ALTER TABLE tblUser ALTER COLUMN role SET DEFAULT 'user';
+UPDATE tblUser SET role = 'user' WHERE role IN ('operator', 'viewer');
+ALTER TABLE tblUser DROP CONSTRAINT IF EXISTS chk_tbluser_role;
+ALTER TABLE tblUser ADD CONSTRAINT chk_tbluser_role CHECK (role IN ('admin', 'user'));
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. tblRefreshToken — refresh token (hash trong DB, xoay vòng được)
@@ -245,6 +254,12 @@ CREATE TABLE IF NOT EXISTS tblAuditLog (
 CREATE INDEX IF NOT EXISTS idx_audit_user    ON tblAuditLog(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON tblAuditLog(created_at DESC);
 
+-- Migration (DEF-03): bản cũ ghi mật khẩu dạng rõ vào metadata của user.update
+-- → xoá khoá 'password', thay bằng cờ password_reset. Chạy lại không ảnh hưởng.
+UPDATE tblAuditLog
+SET metadata = (metadata - 'password') || '{"password_reset": true}'::jsonb
+WHERE metadata ? 'password';
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 6. tblCccdProfile — Profile CCCD đã lưu của người dùng (nhiều profile / user,
 --    các profile ngang hàng, không có profile "mặc định")
@@ -265,6 +280,9 @@ ALTER TABLE tblCccdProfile DROP COLUMN IF EXISTS is_default;
 
 -- Migration: chuyển tblUser.cccd_profile (1 object, bản cũ) sang tblCccdProfile
 -- (chỉ với user chưa có profile nào → chạy lại nhiều lần không nhân bản dữ liệu)
+-- DEF-07: chuyển xong thì xoá cột cũ (NULL) để profile người dùng đã xoá không
+-- bị chép lại ở lần khởi động sau. INSERT chạy TRƯỚC UPDATE nên dữ liệu chưa
+-- chuyển không bị mất; giá trị rỗng/không phải object cũng được dọn luôn.
 DO $$
 BEGIN
     INSERT INTO tblCccdProfile (user_id, data)
@@ -274,6 +292,8 @@ BEGIN
       AND jsonb_typeof(u.cccd_profile) = 'object'
       AND u.cccd_profile <> '{}'::jsonb
       AND NOT EXISTS (SELECT 1 FROM tblCccdProfile p WHERE p.user_id = u.id);
+
+    UPDATE tblUser SET cccd_profile = NULL WHERE cccd_profile IS NOT NULL;
 END $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -297,14 +317,8 @@ VALUES
      'Tờ khai sức khỏe phục vụ khám chữa bệnh.',
      TRUE, TRUE,
      JSONB_BUILD_ARRAY(
-         JSONB_BUILD_OBJECT('key', 'phone',              'label', 'Số điện thoại liên hệ',                     'hint', 'Nhập số điện thoại đang sử dụng'),
-         JSONB_BUILD_OBJECT('key', 'symptoms',           'label', 'Triệu chứng (nếu có)',                      'hint', 'Nhập triệu chứng hoặc ghi "Không"'),
-         JSONB_BUILD_OBJECT('key', 'provinces_visited',  'label', 'Địa phương đã đi (14 ngày)',                'hint', 'Liệt kê tỉnh/thành phố, mỗi địa phương một dòng'),
-         JSONB_BUILD_OBJECT('key', 'from_outbreak_area', 'label', 'Đi đến/ở/về từ vùng dịch',                 'hint', 'co hoặc khong'),
-         JSONB_BUILD_OBJECT('key', 'contact_suspected',  'label', 'Tiếp xúc người nghi ngờ mắc bệnh',         'hint', 'co hoặc khong'),
-         JSONB_BUILD_OBJECT('key', 'contact_symptoms',   'label', 'Tiếp xúc người có triệu chứng sốt/ho',     'hint', 'co hoặc khong'),
-         JSONB_BUILD_OBJECT('key', 'has_fever_cough',    'label', 'Hiện có sốt/ho/khó thở/đau họng',          'hint', 'co hoặc khong'),
-         JSONB_BUILD_OBJECT('key', 'existing_conditions','label', 'Bệnh nền hiện có',                          'hint', 'Ghi tên bệnh hoặc "Không có"')
+         JSONB_BUILD_OBJECT('key', 'phone',    'label', 'Số điện thoại liên hệ',  'hint', 'Nhập số điện thoại đang sử dụng'),
+         JSONB_BUILD_OBJECT('key', 'symptoms', 'label', 'Triệu chứng (nếu có)',   'hint', 'Nhập triệu chứng hoặc ghi "Không"')
      ),
      NULL),
 

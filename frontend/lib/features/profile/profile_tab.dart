@@ -394,6 +394,7 @@ class _ProfileTabState extends State<ProfileTab> {
           },
         ),
         floatingActionButton: FloatingActionButton(
+          tooltip: 'Thêm Profile CCCD',
           backgroundColor: AppColors.flagRed,
           foregroundColor: Colors.white,
           onPressed: _showAddProfileBottomSheet,

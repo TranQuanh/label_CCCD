@@ -7,7 +7,8 @@ import '../../data/session/session_store.dart';
 /// gọi `POST /api/v1/auth/change-password`. Không còn OTP demo.
 ///
 /// Backend xác thực `current_password` trước, sau đó đổi mật khẩu và thu hồi
-/// toàn bộ phiên khác (bump `token_version` + xoá refresh token).
+/// MỌI phiên kể cả phiên hiện tại (bump `token_version` + xoá refresh token)
+/// → màn thành công đưa người dùng về đăng nhập lại.
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
 
@@ -73,6 +74,18 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Đã đổi xong: phiên đã chết → nút Back hệ thống cũng phải về màn đăng nhập,
+    // không quay lại HomeShell.
+    return PopScope(
+      canPop: !_done,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _done) _finish();
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: Column(
@@ -83,19 +96,25 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             padding: EdgeInsets.fromLTRB(
                 18, MediaQuery.of(context).padding.top + 10, 18, 18),
             child: Row(children: [
-              InkWell(
-                onTap: () => Navigator.of(context).maybePop(),
-                borderRadius: BorderRadius.circular(10),
-                child: Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .12),
-                    borderRadius: BorderRadius.circular(10),
+              // DEF-35: nhãn cho trình đọc màn hình.
+              Semantics(
+                button: true,
+                label: 'Quay lại',
+                child: InkWell(
+                  onTap:
+                      _done ? _finish : () => Navigator.of(context).maybePop(),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        size: 18, color: Colors.white),
                   ),
-                  child: const Icon(Icons.arrow_back,
-                      size: 18, color: Colors.white),
                 ),
               ),
               const SizedBox(width: 12),
@@ -131,7 +150,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                                 Expanded(
                                   child: Text(
                                       'Mật khẩu mới tối thiểu 8 ký tự và phải gồm cả chữ lẫn số. '
-                                      'Sau khi đổi, các phiên đăng nhập khác sẽ bị thu hồi.',
+                                      'Sau khi đổi, mọi phiên đăng nhập (kể cả phiên này) sẽ bị thu hồi.',
                                       style: TextStyle(
                                           fontSize: 12,
                                           color: AppColors.inkSoft,
@@ -232,6 +251,15 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     );
   }
 
+  /// Backend đã thu hồi MỌI phiên (kể cả phiên này) → xoá phiên cục bộ; main.dart
+  /// thấy phiên kết thúc kèm thông báo sẽ đưa về AuthScreen.
+  void _finish() {
+    sessionStore.expireSession(
+      message:
+          'Đổi mật khẩu thành công. Vui lòng đăng nhập lại bằng mật khẩu mới.',
+    );
+  }
+
   Widget _doneStep() => Center(
         child: Padding(
           padding: const EdgeInsets.all(40),
@@ -272,7 +300,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 width: double.infinity,
                 height: 54,
                 child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: _finish,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.navy,
                     foregroundColor: Colors.white,

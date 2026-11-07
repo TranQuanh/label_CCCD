@@ -2,13 +2,14 @@
 deps.py
 =======
 Phụ thuộc FastAPI dùng chung cho các router:
-  get_current_user       — giải mã Bearer token → user (kèm kiểm tra blacklist/active/tok_ver)
-  require_admin          — ép role == 'admin' (dùng cho /users, /audit-logs)
+  get_current_user     — giải mã Bearer token → user (kèm kiểm tra blacklist/active/tok_ver)
+  require_admin        — ép role == 'admin' (dùng cho /users, /audit-logs)
   require_role(min_role) — RBAC: 'user' < 'admin'
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
@@ -19,12 +20,21 @@ from .security import decode_access_token
 # Thứ tự quyền: càng về sau càng cao.
 ROLE_LEVELS = {"user": 1, "admin": 2}
 
-# Tên biểu thức SQL sắp xếp theo cấp độ role dùng chung cho các truy vấn đọc user.
+# Tên cột role dùng chung cho mọi truy vấn đọc user.
 ROLE_ORDER = "CASE role WHEN 'admin' THEN 2 ELSE 1 END"
 
 
 def _unauthorized(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+
+
+def parse_uuid(value) -> Optional[str]:
+    """Chuỗi UUID hợp lệ → dạng chuẩn; sai định dạng → None (DEF-23: để
+    router trả 404/400 thay vì lỗi 500 từ PostgreSQL)."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def get_current_user(
@@ -46,10 +56,15 @@ def get_current_user(
     if redis_client.is_blacklisted(payload.get("jti", "")):
         raise _unauthorized("Token đã bị thu hồi (đã đăng xuất)")
 
+    # 'sub' thiếu / sai định dạng UUID → 401 thay vì lỗi 500 từ PostgreSQL.
+    sub = parse_uuid(payload.get("sub")) if payload.get("sub") else None
+    if sub is None:
+        raise _unauthorized("Token không hợp lệ")
+
     user = db.fetch_one(
         "SELECT id, username, email, password_hash, full_name, role, is_active, "
         "token_version FROM tblUser WHERE id = %s",
-        (payload.get("sub"),),
+        (sub,),
     )
     if user is None:
         raise _unauthorized("Tài khoản không tồn tại")

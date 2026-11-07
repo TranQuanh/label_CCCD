@@ -57,7 +57,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
-  /// Xử lý lưu hồ sơ với review status do USER tự kiểm định.
+  /// Xử lý gửi hồ sơ sau khi USER tự xác nhận đã kiểm tra thông tin.
   Future<void> _submit() async {
     if (_submitting) return;
     setState(() => _submitting = true);
@@ -65,11 +65,11 @@ class _PreviewScreenState extends State<PreviewScreen> {
     final reviewConfirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Xác nhận review'),
+        title: const Text('Xác nhận gửi hồ sơ'),
         content: const Text(
-            'Bạn đã kiểm tra và sửa chữa thông tin trích xuất chưa?\n'
-            'Bấm "Đồng ý" để lưu hồ sơ vào lịch sử (trạng thái: Đã duyệt).\n'
-            'Bấm "Hủy" để quay lại review tiếp.'),
+            'Bạn đã kiểm tra và sửa thông tin trích xuất chưa?\n'
+            'Bấm "Đồng ý" để gửi hồ sơ lên hệ thống.\n'
+            'Bấm "Hủy" để quay lại kiểm tra tiếp.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -397,19 +397,23 @@ class _PreviewScreenState extends State<PreviewScreen> {
           18, MediaQuery.of(context).padding.top + 12, 18, 12),
       child: Row(
         children: [
-          // Nút back
-          InkWell(
-            onTap: () => Navigator.of(context).maybePop(),
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(10),
+          // Nút back (DEF-35: nhãn cho trình đọc màn hình)
+          Semantics(
+            button: true,
+            label: 'Quay lại',
+            child: InkWell(
+              onTap: () => Navigator.of(context).maybePop(),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
               ),
-              child: const Icon(Icons.arrow_back, size: 18, color: Colors.white),
             ),
           ),
           const SizedBox(width: 12),

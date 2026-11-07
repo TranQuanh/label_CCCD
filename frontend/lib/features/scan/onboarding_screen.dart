@@ -26,20 +26,25 @@ class OnboardingScreen extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(
                 22, MediaQuery.of(context).padding.top + 10, 22, 0),
             child: Row(children: [
-              InkWell(
-                onTap: () => Navigator.of(context).maybePop(),
-                borderRadius: BorderRadius.circular(10),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.line, width: 1.5),
+              // DEF-35: nhãn cho trình đọc màn hình.
+              Semantics(
+                button: true,
+                label: 'Quay lại',
+                child: InkWell(
+                  onTap: () => Navigator.of(context).maybePop(),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.line, width: 1.5),
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        size: 18, color: AppColors.navy),
                   ),
-                  child: const Icon(Icons.arrow_back,
-                      size: 18, color: AppColors.navy),
                 ),
               ),
               const SizedBox(width: 14),

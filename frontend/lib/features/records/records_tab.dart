@@ -31,6 +31,7 @@ class _RecordsTabState extends State<RecordsTab> {
       animation: sessionStore,
       builder: (context, _) {
         final records = sessionStore.records;
+        final error = sessionStore.recordsError;
         return Column(
           children: [
             Container(
@@ -84,15 +85,18 @@ class _RecordsTabState extends State<RecordsTab> {
                   ? (sessionStore.loadingRecords
                       ? const Center(
                           child: CircularProgressIndicator(color: AppColors.navy))
-                      : _empty())
+                      : (error != null ? _errorState(error) : _empty()))
                   : ListView(
                       padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                      children: records
-                          .map((r) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: _RecordCard(record: r),
-                              ))
-                          .toList(),
+                      children: [
+                        // Lỗi tải lại nhưng còn dữ liệu cũ → banner nhỏ phía trên.
+                        if (error != null && !sessionStore.loadingRecords)
+                          _errorBanner(error),
+                        ...records.map((r) => Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _RecordCard(record: r),
+                            )),
+                      ],
                     ),
             ),
           ],
@@ -100,6 +104,57 @@ class _RecordsTabState extends State<RecordsTab> {
       },
     );
   }
+
+  /// Tải lịch sử lỗi và chưa có dữ liệu → thông báo + nút Thử lại.
+  Widget _errorState(String message) => Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 30),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.cloud_off_outlined,
+                  size: 40, color: Color(0xFF93A4C4)),
+              const SizedBox(height: 12),
+              Text(message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 13.5, color: AppColors.inkSoft, height: 1.5)),
+              const SizedBox(height: 14),
+              OutlinedButton(
+                onPressed: () => sessionStore.loadRecords(),
+                child: const Text('Thử lại'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  /// Tải lại lỗi nhưng vẫn còn danh sách cũ → banner nhỏ phía trên danh sách.
+  Widget _errorBanner(String message) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF4E5),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFFFD8A8)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                size: 18, color: Color(0xFFB45309)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(message,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.inkSoft)),
+            ),
+            TextButton(
+              onPressed: () => sessionStore.loadRecords(),
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      );
 
   Widget _empty() => Center(
         child: Padding(

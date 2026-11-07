@@ -19,6 +19,11 @@ class AuthApiClient {
   final String _baseUrl;
   late final ApiClient _api;
 
+  /// Hook dùng chung cho MỌI instance (các tab admin tự tạo [AuthApiClient]
+  /// riêng): gọi khi token hết hạn hẳn và không refresh được. [SessionStore]
+  /// đăng ký hook này để xoá phiên cục bộ và đưa người dùng về màn đăng nhập.
+  static void Function()? onSessionExpired;
+
   AuthApiClient({http.Client? client, String? baseUrl})
       : _http = client ?? http.Client(),
         _baseUrl = baseUrl ?? ApiConfig.baseUrl {
@@ -26,17 +31,20 @@ class AuthApiClient {
       client: _http,
       baseUrl: _baseUrl,
       refreshCallback: refreshAccessToken,
-      onSessionExpired: () {
-        // Token hết hạn hẳn và không refresh được → ép người dùng đăng nhập lại.
-        // Trong thực tế, SessionStore sẽ xử lý việc này.
-      },
+      // Đọc hook lúc gọi (không chụp lúc tạo) để instance tạo trước khi
+      // SessionStore đăng ký vẫn dùng được.
+      onSessionExpired: () => AuthApiClient.onSessionExpired?.call(),
     );
   }
 
   void dispose() => _http.close();
 
   /// Cấp access token mới từ refresh token (dùng cho auto-refresh trong
-  /// [ApiClient] và auto-login khi mở app). Trả null nếu refresh thất bại.
+  /// [ApiClient] và auto-login khi mở app).
+  ///
+  /// Trả null khi không có refresh token hoặc server TỪ CHỐI (401/403: token
+  /// bị thu hồi/hết hạn, tài khoản bị khoá). Lỗi mạng/timeout/5xx → ném lại để
+  /// nơi gọi không nhầm thành "phiên hết hạn" và xoá token oan.
   Future<String?> refreshAccessToken() async {
     final refresh = await TokenStore.readRefreshToken();
     if (refresh == null) return null;
@@ -49,10 +57,11 @@ class AuthApiClient {
         await TokenStore.saveAccess(access);
         return access;
       }
-    } catch (_) {
-      // Lỗi refresh (token revoked/hết hạn) → để SessionStore xử lý đăng xuất.
+      return null;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 || e.statusCode == 403) return null;
+      rethrow;
     }
-    return null;
   }
 
   Future<Map<String, dynamic>> _postPublic(String path, Object jsonBody) async {
@@ -123,18 +132,26 @@ class AuthApiClient {
     return _userFromData(data);
   }
 
+  /// Đăng xuất: gọi server thu hồi refresh token + blacklist access, rồi LUÔN
+  /// xoá token trên máy (finally) — kể cả khi không còn access token, access
+  /// hết hạn (401), lỗi mạng. Không bao giờ ném lỗi ra UI.
+  ///
+  /// Gọi qua [_api] để access hết hạn được tự refresh rồi gửi lại (server vẫn
+  /// thu hồi được refresh token). Refresh thất bại trong lúc này sẽ gọi hook
+  /// onSessionExpired → `SessionStore.expireSession` bỏ qua vì
+  /// `SessionStore.logout` đã đặt `_expiring = true` trước khi gọi hàm này.
   Future<void> logout() async {
-    final access = await TokenStore.readAccessToken();
-    if (access == null) return;
     try {
-      await _http.post(
-        Uri.parse('$_baseUrl/api/v1/auth/logout'),
-        headers: {'Authorization': 'Bearer $access'},
-      ).timeout(ApiConfig.requestTimeout);
+      final access = await TokenStore.readAccessToken();
+      final refresh = await TokenStore.readRefreshToken();
+      // Không còn token nào → không có gì để thu hồi trên server.
+      if (access == null && refresh == null) return;
+      await _api.post('/api/v1/auth/logout');
     } catch (_) {
-      // Logout là best-effort — lỗi mạng không được chặn việc xoá phiên cục bộ.
+      // Logout là best-effort — lỗi mạng/401 không được chặn việc xoá phiên cục bộ.
+    } finally {
+      await TokenStore.clear();
     }
-    await TokenStore.clear();
   }
 
   Future<AuthUser> me() async {

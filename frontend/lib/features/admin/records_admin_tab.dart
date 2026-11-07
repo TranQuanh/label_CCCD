@@ -101,7 +101,8 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
 
   static String _date(Map<String, dynamic> r) {
     final raw = r['created_at']?.toString();
-    final d = raw == null ? null : DateTime.tryParse(raw);
+    // DEF-25: ISO UTC có offset → đổi về giờ máy (chuỗi không offset giữ nguyên).
+    final d = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
     if (d == null) return '';
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';

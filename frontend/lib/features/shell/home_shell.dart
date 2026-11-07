@@ -9,13 +9,22 @@ import '../forms/forms_tab.dart';
 import '../profile/profile_tab.dart';
 import '../records/records_tab.dart';
 
-/// Khung chính với 4 tab: Biểu mẫu · Hồ sơ · Profile · Tài khoản.
+/// Chỉ số các tab của [HomeShell] (đúng thứ tự trên thanh điều hướng).
+/// Dùng hằng có tên thay cho số để không mở nhầm tab khi thứ tự thay đổi.
+abstract final class HomeTab {
+  static const forms = 0;
+  static const profile = 1;
+  static const records = 2;
+  static const account = 3;
+}
+
+/// Khung chính với 4 tab: Biểu mẫu · Profile · Hồ sơ · Tài khoản.
 ///
 /// `IndexedStack` dựng sẵn mọi tab nên lịch sử được nạp lại mỗi khi
 /// chuyển tab (không phải chỉ lần đầu mở app).
 class HomeShell extends StatefulWidget {
   final int initialIndex;
-  const HomeShell({super.key, this.initialIndex = 0});
+  const HomeShell({super.key, this.initialIndex = HomeTab.forms});
 
   @override
   State<HomeShell> createState() => HomeShellState();
@@ -26,7 +35,7 @@ class HomeShellState extends State<HomeShell> {
 
   void goToTab(int i) {
     setState(() => _index = i);
-    if (i == 2) unawaited(sessionStore.loadRecords());
+    if (i == HomeTab.records) unawaited(sessionStore.loadRecords());
   }
 
   @override
@@ -37,8 +46,8 @@ class HomeShellState extends State<HomeShell> {
         index: _index,
         children: [
           const FormsTab(),
-          ProfileTab(onUseInForms: () => goToTab(0)),
-          RecordsTab(onCreateNew: () => goToTab(0)),
+          ProfileTab(onUseInForms: () => goToTab(HomeTab.forms)),
+          RecordsTab(onCreateNew: () => goToTab(HomeTab.forms)),
           const AccountTab(),
         ],
       ),
@@ -54,10 +63,10 @@ class HomeShellState extends State<HomeShell> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _tab(0, Icons.assignment_outlined, Icons.assignment, 'Biểu mẫu'),
-                _tab(1, Icons.badge, Icons.badge, 'Profile'),
-                _tab(2, Icons.folder_outlined, Icons.folder, 'Hồ sơ'),
-                _tab(3, Icons.person_outline, Icons.person, 'Tài khoản'),
+                _tab(HomeTab.forms, Icons.assignment_outlined, Icons.assignment, 'Biểu mẫu'),
+                _tab(HomeTab.profile, Icons.badge, Icons.badge, 'Profile'),
+                _tab(HomeTab.records, Icons.folder_outlined, Icons.folder, 'Hồ sơ'),
+                _tab(HomeTab.account, Icons.person_outline, Icons.person, 'Tài khoản'),
               ],
             ),
           ),

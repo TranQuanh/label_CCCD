@@ -30,11 +30,12 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import db
 from .audit import audit
 from .deps import get_current_user
+from .records import check_payload_limits
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,12 @@ _COLUMNS = "id, data, created_at, updated_at"
 # ── Models ─────────────────────────────────────────────────────────────────
 class ProfileBody(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
+
+    # DEF-20: tối đa 50 trường, mỗi giá trị tối đa 1000 ký tự (vượt → 422).
+    @field_validator("data")
+    @classmethod
+    def _limit_payload(cls, value: dict) -> dict:
+        return check_payload_limits(value, "data")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

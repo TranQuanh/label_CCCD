@@ -16,11 +16,23 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from . import db
-from .deps import get_current_user, require_admin
+from .deps import get_current_user, parse_uuid, require_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
+
+# Độ dài tối đa cột (schema.sql): ip_address VARCHAR(45), device_info VARCHAR(255).
+IP_MAX_LEN = 45
+DEVICE_INFO_MAX_LEN = 255
+
+
+def clip(value: Optional[str], max_len: int) -> Optional[str]:
+    """Cắt chuỗi về tối đa `max_len` ký tự (DEF-05: tránh lỗi 500 do vượt độ
+    dài cột). None giữ nguyên None."""
+    if value is None:
+        return None
+    return value[:max_len]
 
 
 def audit(
@@ -38,7 +50,8 @@ def audit(
             "INSERT INTO tblAuditLog (user_id, action, target_type, target_id, "
             "metadata, ip_address, device_info) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (user_id, action, target_type, target_id,
-             __jsonb(metadata), ip_address, device_info),
+             __jsonb(metadata), clip(ip_address, IP_MAX_LEN),
+             clip(device_info, DEVICE_INFO_MAX_LEN)),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Không ghi được audit log (%s): %s", action, exc)
@@ -67,8 +80,12 @@ def list_audit_logs(
     params: list[Any] = []
 
     if user_id:
+        # DEF-23: user_id sai định dạng UUID → 400 thay vì 500 từ PostgreSQL.
+        parsed = parse_uuid(user_id)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="user_id không hợp lệ")
         clauses.append("a.user_id = %s")
-        params.append(user_id)
+        params.append(parsed)
     if action_type:
         clauses.append("a.action = %s")
         params.append(action_type)

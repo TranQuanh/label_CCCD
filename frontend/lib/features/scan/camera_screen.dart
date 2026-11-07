@@ -11,8 +11,10 @@ import 'processing_screen.dart';
 
 /// Màn hình 4 — Camera & Quét: chụp mặt trước rồi mặt sau.
 ///
-/// Ảnh chụp được ghi ra thư mục tạm của hệ điều hành và bị xoá ngay sau khi
-/// backend trích xuất xong (xem `ExtractionRepository`).
+/// Ảnh chụp (và bản sao ảnh chọn từ thư viện) được camera / image_picker ghi
+/// vào thư mục cache/tmp của app. `ProcessingScreen` xoá hai ảnh này khi trích
+/// xuất thành công, hoặc khi người dùng rời màn xử lý mà chưa thành công
+/// (xem `core/utils/temp_file_cleaner.dart`; chỉ xoá file trong cache/tmp).
 class CameraScreen extends StatefulWidget {
   final FormType? formType;
   final bool isProfileScan;
@@ -209,6 +211,7 @@ class _CameraScreenState extends State<CameraScreen> {
           child: _circle(
             const Icon(Icons.arrow_back, color: Colors.white, size: 20),
             _goBack,
+            label: 'Quay lại',
           ),
         ),
       );
@@ -312,7 +315,8 @@ class _CameraScreenState extends State<CameraScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _circle(const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                  _goBack),
+                  _goBack,
+                  label: 'Quay lại'),
               Column(children: [
                 Text(_isBack ? 'Mặt sau CCCD' : 'Mặt trước CCCD',
                     style: const TextStyle(
@@ -329,24 +333,31 @@ class _CameraScreenState extends State<CameraScreen> {
                 Icon(_flash == FlashMode.off ? Icons.flash_off : Icons.flash_on,
                     color: AppColors.star, size: 20),
                 _toggleFlash,
+                label: 'Bật/tắt đèn flash',
               ),
             ],
           ),
         ),
       );
 
-  Widget _circle(Widget icon, VoidCallback onTap) => InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: 36,
-          height: 36,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: .4),
-            shape: BoxShape.circle,
+  /// Nút tròn nhỏ; [label] là nhãn cho trình đọc màn hình (DEF-35).
+  Widget _circle(Widget icon, VoidCallback onTap, {required String label}) =>
+      Semantics(
+        button: true,
+        label: label,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: .4),
+              shape: BoxShape.circle,
+            ),
+            child: icon,
           ),
-          child: icon,
         ),
       );
 
@@ -361,46 +372,55 @@ class _CameraScreenState extends State<CameraScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    InkWell(
-                      onTap: _pickFromGallery,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        width: 52,
-                        height: 52,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white24),
+                    // DEF-35: nhãn cho trình đọc màn hình.
+                    Semantics(
+                      button: true,
+                      label: 'Chọn ảnh từ thư viện',
+                      child: InkWell(
+                        onTap: _pickFromGallery,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: .12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Icon(Icons.photo_library_outlined,
+                              color: Colors.white, size: 22),
                         ),
-                        child: const Icon(Icons.photo_library_outlined,
-                            color: Colors.white, size: 22),
                       ),
                     ),
-                    GestureDetector(
-                      onTap: _capture,
-                      child: Container(
-                        width: 80,
-                        height: 80,
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 4),
-                        ),
+                    Semantics(
+                      button: true,
+                      label: 'Chụp ảnh',
+                      child: GestureDetector(
+                        onTap: _capture,
                         child: Container(
-                          alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            color: AppColors.flagRed,
+                          width: 80,
+                          height: 80,
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
                             shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 4),
                           ),
-                          child: _busy
-                              ? const SizedBox(
-                                  width: 26,
-                                  height: 26,
-                                  child: CircularProgressIndicator(
-                                      color: Colors.white, strokeWidth: 3),
-                                )
-                              : null,
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: const BoxDecoration(
+                              color: AppColors.flagRed,
+                              shape: BoxShape.circle,
+                            ),
+                            child: _busy
+                                ? const SizedBox(
+                                    width: 26,
+                                    height: 26,
+                                    child: CircularProgressIndicator(
+                                        color: Colors.white, strokeWidth: 3),
+                                  )
+                                : null,
+                          ),
                         ),
                       ),
                     ),
