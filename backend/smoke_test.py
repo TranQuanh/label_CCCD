@@ -9,7 +9,8 @@ Cover:
        từ chối → audit-logs đủ sự kiện.
   Quality — /api/v1/quality-check: 401 không token, 200 có khóa 'available'
        (có/không cài OpenCV đều qua), side sai → 400.
-  P2 — /forms trả metadata JSONB {key,label,hint}; admin POST/PUT /forms;
+  P2 — /forms trả metadata JSONB {key,label,hint}; admin chỉ ẩn/hiện biểu mẫu
+       (không tạo/sửa); admin không xem nội dung hồ sơ người khác;
        gửi hồ sơ (POST /scan-records) nhận mã server; lịch sử từ PostgreSQL;
        Profile CCCD (/profiles); đổi mật khẩu (bỏ OTP, verify mật khẩu hiện tại).
   Role chỉ còn 'admin' và 'user'.
@@ -108,6 +109,9 @@ def main() -> None:
         conn.commit()
         conn.execute("TRUNCATE tblAuditLog, tblRefreshToken, tblScanRecord, tblUser CASCADE")
         conn.execute("DELETE FROM tblFormType WHERE slug = 'work_permit'")
+        # Lần chạy trước có thể dừng giữa chừng khi atm_open đang bị ẩn.
+        conn.execute("UPDATE tblFormType SET is_active = TRUE "
+                     "WHERE slug IN ('atm_open', 'health_declare', 'service_contract')")
         conn.commit()
 
     # `with` để TestClient kích hoạt lifespan (init_db + Redis).
@@ -194,7 +198,7 @@ def _run(client: TestClient) -> None:
 
     # DEF-16: giả lập khóa đã hết hạn (locked_until ở quá khứ, bộ đếm vẫn 5)
     # → sai 1 lần chỉ là 401 (lần sai thứ 1), không bị khóa lại ngay.
-    from datetime import datetime, timedelta, timezone
+    from datetime import date, datetime, timedelta, timezone
 
     import psycopg
 
@@ -398,30 +402,26 @@ def _run(client: TestClient) -> None:
     user1_access = r.json()["data"]["access_token"]
     check("đăng ký user1 201", r.status_code == 201)
 
-    r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {user1_access}"},
-                    json={"slug": "x", "name": "X", "required_fields": []})
-    check("tạo form (user) → 403", r.status_code == 403, str(r.json()))
-
+    # Admin KHÔNG được tạo / sửa biểu mẫu (chỉ ẩn / hiện).
     r = client.post("/api/v1/forms", headers={"Authorization": f"Bearer {admin_access}"},
-                    json={"slug": "work_permit", "name": "Giấy phép lao động",
-                          "description": "Test P2", "requires_front": True,
-                          "requires_back": True,
-                          "required_fields": [
-                              {"key": "phone", "label": "Số điện thoại", "hint": "Nhập SĐT"},
-                              {"key": "company", "label": "Công ty", "hint": "Tên công ty"},
-                          ]})
-    check("tạo form (admin) 201", r.status_code == 201, str(r.json())[:80])
+                    json={"slug": "x", "name": "X", "required_fields": []})
+    check("tạo form (admin) → 405 (đã bỏ)", r.status_code == 405, str(r.status_code))
+    r = client.put("/api/v1/forms/atm_open", headers={"Authorization": f"Bearer {admin_access}"},
+                   json={"name": "Đổi tên"})
+    check("sửa form (admin) → 405 (đã bỏ)", r.status_code == 405, str(r.status_code))
 
-    r = client.put("/api/v1/forms/work_permit", headers={"Authorization": f"Bearer {admin_access}"},
-                   json={"requires_back": False, "required_fields": [
-                       {"key": "phone", "label": "Số điện thoại", "hint": "Nhập SĐT"}]})
-    check("sửa form (admin) 200", r.status_code == 200, str(r.json())[:80])
-
-    r = client.get("/api/v1/forms")
-    check("forms mới xuất hiện", any(f["slug"] == "work_permit" for f in r.json()["forms"]))
-    wp = next(f for f in r.json()["forms"] if f["slug"] == "work_permit")
-    check("sửa form: requires_back=False + 1 trường",
-          wp["requires_back"] is False and len(wp["required_fields"]) == 1)
+    r = client.get("/api/v1/forms/all", headers={"Authorization": f"Bearer {user1_access}"})
+    check("GET /forms/all (user) → 403", r.status_code == 403, str(r.json()))
+    r = client.get("/api/v1/forms/all", headers={"Authorization": f"Bearer {admin_access}"})
+    check("GET /forms/all (admin) 200 + record_count",
+          r.status_code == 200 and len(r.json().get("forms", [])) >= 3
+          and all("record_count" in f for f in r.json()["forms"]), str(r.json())[:120])
+    r = client.patch("/api/v1/forms/atm_open/visibility",
+                     headers={"Authorization": f"Bearer {user1_access}"}, json={"is_active": False})
+    check("user ẩn biểu mẫu → 403", r.status_code == 403, str(r.json()))
+    r = client.patch("/api/v1/forms/khong-co/visibility",
+                     headers={"Authorization": f"Bearer {admin_access}"}, json={"is_active": False})
+    check("ẩn biểu mẫu không tồn tại → 404", r.status_code == 404, str(r.json()))
 
     print("== P2: Gửi hồ sơ (POST /scan-records) ==")
     card = {
@@ -474,8 +474,9 @@ def _run(client: TestClient) -> None:
     r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {user1_access}"})
     check("GET chi tiết record 200", r.status_code == 200, str(r.json())[:80])
 
+    # Admin KHÔNG được xem nội dung hồ sơ của người khác.
     r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {admin_access}"})
-    check("admin xem được record (có quyền)", r.status_code == 200, str(r.json())[:80])
+    check("admin xem chi tiết hồ sơ người khác → 404", r.status_code == 404, str(r.json())[:80])
 
     # DEF-23: id / user_id sai định dạng UUID → 404 / 400 (không phải 500).
     r = client.get("/api/v1/scan-records/abc", headers={"Authorization": f"Bearer {user1_access}"})
@@ -502,6 +503,18 @@ def _run(client: TestClient) -> None:
     check("admin xem hồ sơ mọi người (?all_users=true) 200",
           r.status_code == 200 and any(x["id"] == rec_id for x in r.json().get("records", [])),
           str(r.json())[:80])
+    check("danh sách admin KHÔNG có nội dung CCCD / supp",
+          all("extracted_data" not in x and "supp" not in x for x in r.json().get("records", []))
+          and "total" in r.json(), str(r.json())[:120])
+    r = client.get("/api/v1/scan-records",
+                   params={"all_users": "true", "form_id": "atm_open", "q": rec_code},
+                   headers={"Authorization": f"Bearer {admin_access}"})
+    check("admin lọc theo biểu mẫu + mã hồ sơ",
+          r.status_code == 200 and [x["id"] for x in r.json().get("records", [])] == [rec_id],
+          str(r.json())[:120])
+    r = client.get("/api/v1/scan-records", params={"all_users": "true", "status": "xyz"},
+                   headers={"Authorization": f"Bearer {admin_access}"})
+    check("admin status=xyz → 400", r.status_code == 400, str(r.json()))
     r = client.patch(f"/api/v1/scan-records/{rec_id}/visibility",
                      headers={"Authorization": f"Bearer {user1_access}"}, json={"is_hidden": True})
     check("user ẩn hồ sơ → 403", r.status_code == 403, str(r.json()))
@@ -518,6 +531,52 @@ def _run(client: TestClient) -> None:
     check("admin hiện lại hồ sơ 200", r.status_code == 200 and r.json().get("is_hidden") is False, str(r.json())[:80])
     r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {user1_access}"})
     check("chủ hồ sơ thấy lại hồ sơ", r.status_code == 200, str(r.json())[:80])
+
+    print("== Admin ẩn / hiện biểu mẫu ==")
+    r = client.patch("/api/v1/forms/atm_open/visibility",
+                     headers={"Authorization": f"Bearer {admin_access}"}, json={"is_active": False})
+    check("admin ẩn biểu mẫu atm_open 200",
+          r.status_code == 200 and r.json().get("is_active") is False, str(r.json())[:80])
+    r = client.get("/api/v1/forms")
+    check("biểu mẫu ẩn không còn trong danh mục",
+          all(f["slug"] != "atm_open" for f in r.json().get("forms", [])))
+    r = client.get("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"})
+    check("hồ sơ cũ của biểu mẫu ẩn bị ẩn với chủ hồ sơ",
+          all(x["id"] != rec_id for x in r.json().get("records", [])), str(r.json())[:80])
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {user1_access}"})
+    check("chủ hồ sơ mở hồ sơ của biểu mẫu ẩn → 404", r.status_code == 404, str(r.json())[:80])
+    r = client.post("/api/v1/scan-records", headers={"Authorization": f"Bearer {user1_access}"},
+                    json={"form_id": "atm_open", "extracted_data": card})
+    check("gửi hồ sơ mới cho biểu mẫu ẩn → 404", r.status_code == 404, str(r.json()))
+    r = client.get("/api/v1/scan-records", params={"all_users": "true", "status": "form_hidden"},
+                   headers={"Authorization": f"Bearer {admin_access}"})
+    check("admin vẫn thấy hồ sơ của biểu mẫu ẩn (form_active=false)",
+          any(x["id"] == rec_id and x.get("form_active") is False
+              for x in r.json().get("records", [])), str(r.json())[:120])
+    r = client.patch("/api/v1/forms/atm_open/visibility",
+                     headers={"Authorization": f"Bearer {admin_access}"}, json={"is_active": True})
+    check("admin hiện lại biểu mẫu 200", r.status_code == 200, str(r.json())[:80])
+    r = client.get(f"/api/v1/scan-records/{rec_id}", headers={"Authorization": f"Bearer {user1_access}"})
+    check("hồ sơ hiện lại khi biểu mẫu hiện lại", r.status_code == 200, str(r.json())[:80])
+
+    print("== Admin: chi tiết tài khoản, gỡ khóa, đăng xuất mọi thiết bị ==")
+    user1_id = client.get("/api/v1/auth/me",
+                          headers={"Authorization": f"Bearer {user1_access}"}).json().get("user_id")
+    r = client.get(f"/api/v1/users/{user1_id}", headers={"Authorization": f"Bearer {admin_access}"})
+    detail = r.json()
+    check("GET /users/{id} 200 + số hồ sơ, phiên",
+          r.status_code == 200 and detail.get("record_count", 0) >= 1
+          and "active_sessions" in detail and "password_hash" not in detail, str(detail)[:120])
+    r = client.post(f"/api/v1/users/{user1_id}/unlock", headers={"Authorization": f"Bearer {admin_access}"})
+    check("POST /users/{id}/unlock 200", r.status_code == 200, str(r.json()))
+    r = client.get("/api/v1/audit-logs", params={"action_group": "form", "end_date": str(date.today())},
+                   headers={"Authorization": f"Bearer {admin_access}"})
+    check("audit lọc nhóm form + end_date hôm nay (tính trọn ngày)",
+          r.status_code == 200 and any(x["action"] == "form.hide" for x in r.json().get("logs", []))
+          and "total" in r.json(), str(r.json())[:120])
+    r = client.get("/api/v1/audit-logs", params={"action_group": "xyz"},
+                   headers={"Authorization": f"Bearer {admin_access}"})
+    check("audit action_group=xyz → 400", r.status_code == 400, str(r.json()))
 
     print("== Profile CCCD (/profiles) ==")
     op_h = {"Authorization": f"Bearer {user1_access}"}

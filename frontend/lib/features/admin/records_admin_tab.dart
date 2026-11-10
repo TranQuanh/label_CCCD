@@ -1,30 +1,49 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
-import '../../data/api/api_exception.dart';
 import '../../data/api/auth_api_client.dart';
+import 'admin_common.dart';
 
-/// Tab hồ sơ (admin): xem hồ sơ của MỌI người dùng và ẩn / hiện từng hồ sơ.
+/// Tab Hồ sơ (admin): QUẢN LÝ hồ sơ của mọi người dùng.
 ///
-/// Hồ sơ bị ẩn không còn hiện trong tab "Hồ sơ" của chủ hồ sơ (backend lọc
-/// `is_hidden`); dữ liệu vẫn giữ nguyên và admin hiện lại được bất cứ lúc nào.
+/// Admin KHÔNG được xem thông tin người dùng: danh sách chỉ có mã hồ sơ, biểu
+/// mẫu, tên đăng nhập người tạo, thời gian và trạng thái. Không mở được chi
+/// tiết, không có họ tên / số CCCD / trường bổ sung (server cũng không trả).
+///
+/// Admin làm được: ẩn / hiện từng hồ sơ, lọc (trạng thái, biểu mẫu, khoảng
+/// ngày), tìm theo mã hồ sơ / tên đăng nhập, tải thêm.
+/// [userId] (tuỳ chọn): chỉ hồ sơ của một tài khoản (mở từ chi tiết người dùng).
 class RecordsAdminTab extends StatefulWidget {
-  const RecordsAdminTab({super.key});
+  final String? userId;
+
+  const RecordsAdminTab({super.key, this.userId});
 
   @override
   State<RecordsAdminTab> createState() => _RecordsAdminTabState();
 }
 
-/// Bộ lọc hiển thị danh sách.
-enum _Filter { all, visible, hidden }
-
 class _RecordsAdminTabState extends State<RecordsAdminTab> {
+  static const _pageSize = 30;
+  static const _statusLabels = {
+    'all': 'Tất cả',
+    'visible': 'Đang hiện',
+    'hidden': 'Đã ẩn',
+    'form_hidden': 'Biểu mẫu ẩn',
+  };
+
   final AuthApiClient _auth = AuthApiClient();
-  List<Map<String, dynamic>>? _records;
+  final TextEditingController _search = TextEditingController();
+
+  final List<Map<String, dynamic>> _records = [];
+  int _total = 0;
   String? _error;
   bool _loading = true;
-  _Filter _filter = _Filter.all;
-  String _query = '';
+  bool _loadingMore = false;
+
+  String _status = 'all';
+  String? _formId;
+  DateTimeRange? _range;
+  List<Map<String, dynamic>> _forms = const [];
 
   /// Id các hồ sơ đang gửi yêu cầu ẩn/hiện (khoá công tắc, tránh bấm 2 lần).
   final Set<String> _busy = {};
@@ -32,14 +51,36 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
   @override
   void initState() {
     super.initState();
+    _loadForms();
     _load();
   }
 
   @override
   void dispose() {
+    _search.dispose();
     _auth.dispose();
     super.dispose();
   }
+
+  Future<void> _loadForms() async {
+    try {
+      final forms = await _auth.listAllForms();
+      if (mounted) setState(() => _forms = forms);
+    } catch (_) {
+      // Không có danh sách biểu mẫu thì chỉ mất bộ lọc theo biểu mẫu.
+    }
+  }
+
+  Future<AdminPage> _fetch(int offset) => _auth.listAllRecords(
+        userId: widget.userId,
+        formId: _formId,
+        status: _status,
+        query: _search.text,
+        startDate: _range == null ? null : apiDate(_range!.start),
+        endDate: _range == null ? null : apiDate(_range!.end),
+        limit: _pageSize,
+        offset: offset,
+      );
 
   Future<void> _load() async {
     setState(() {
@@ -47,15 +88,50 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
       _error = null;
     });
     try {
-      final records = await _auth.listAllRecords();
-      if (mounted) setState(() => _records = records);
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.userMessage);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Không kết nối được máy chủ.');
+      final page = await _fetch(0);
+      if (!mounted) return;
+      setState(() {
+        _records
+          ..clear()
+          ..addAll(page.items);
+        _total = page.total;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = adminErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await _fetch(_records.length);
+      if (!mounted) return;
+      setState(() {
+        _records.addAll(page.items);
+        _total = page.total;
+      });
+    } catch (e) {
+      if (mounted) showAdminSnack(context, adminErrorMessage(e));
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  Future<void> _pickRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year, now.month, now.day),
+      initialDateRange: _range,
+      helpText: 'Chọn khoảng ngày tạo hồ sơ',
+    );
+    if (picked == null) return;
+    setState(() => _range = picked);
+    await _load();
   }
 
   Future<void> _toggleHidden(Map<String, dynamic> record, bool hidden) async {
@@ -66,64 +142,19 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
       final updated = await _auth.setRecordHidden(id, hidden);
       if (!mounted) return;
       setState(() {
-        final list = _records ?? [];
-        final i = list.indexWhere((r) => r['id'].toString() == id);
-        if (i >= 0) list[i] = updated;
+        final i = _records.indexWhere((r) => r['id'].toString() == id);
+        if (i >= 0) _records[i] = {..._records[i], ...updated};
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(hidden
+      showAdminSnack(
+          context,
+          hidden
               ? 'Đã ẩn hồ sơ $code với người dùng.'
-              : 'Đã hiện lại hồ sơ $code cho người dùng.')));
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.userMessage)));
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không kết nối được máy chủ.')));
-      }
+              : 'Đã hiện lại hồ sơ $code cho người dùng.');
+    } catch (e) {
+      if (mounted) showAdminSnack(context, adminErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy.remove(id));
     }
-  }
-
-  /// Họ tên công dân trên thẻ (extracted_data là map snake_case).
-  static String _citizenName(Map<String, dynamic> r) {
-    final data = r['extracted_data'];
-    if (data is Map) {
-      final v = data['ho_va_ten']?.toString() ?? '';
-      if (v.trim().isNotEmpty) return v.trim();
-    }
-    return 'Chưa có tên';
-  }
-
-  static String _date(Map<String, dynamic> r) {
-    final raw = r['created_at']?.toString();
-    // DEF-25: ISO UTC có offset → đổi về giờ máy (chuỗi không offset giữ nguyên).
-    final d = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
-    if (d == null) return '';
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
-  }
-
-  List<Map<String, dynamic>> get _visibleList {
-    final q = _query.trim().toLowerCase();
-    return (_records ?? []).where((r) {
-      final hidden = r['is_hidden'] == true;
-      if (_filter == _Filter.visible && hidden) return false;
-      if (_filter == _Filter.hidden && !hidden) return false;
-      if (q.isEmpty) return true;
-      final haystack = [
-        r['code'],
-        _citizenName(r),
-        r['owner_username'],
-        r['owner_name'],
-        r['form_name'],
-      ].map((e) => (e ?? '').toString().toLowerCase()).join(' ');
-      return haystack.contains(q);
-    }).toList();
   }
 
   @override
@@ -132,103 +163,168 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
       children: [
         _toolbar(),
         Expanded(
-          child: RefreshIndicator(onRefresh: _load, child: _buildBody()),
+          child: RefreshIndicator(onRefresh: _load, child: _body()),
         ),
       ],
     );
   }
 
   Widget _toolbar() {
-    final all = _records ?? [];
-    final hiddenCount = all.where((r) => r['is_hidden'] == true).length;
+    final hasDate = _range != null;
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
-            onChanged: (v) => setState(() => _query = v),
+            controller: _search,
+            textInputAction: TextInputAction.search,
+            onChanged: (_) => setState(() {}), // cập nhật nút xoá
+            onSubmitted: (_) => _load(),
             decoration: InputDecoration(
               isDense: true,
               prefixIcon: const Icon(Icons.search, size: 20),
-              hintText: 'Tìm theo mã hồ sơ, họ tên, người tạo, biểu mẫu',
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Xoá tìm kiếm',
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        _search.clear();
+                        _load();
+                      },
+                    ),
+              hintText: 'Tìm mã hồ sơ hoặc tên đăng nhập',
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, children: [
-            _chip('Tất cả (${all.length})', _Filter.all),
-            _chip('Đang hiện (${all.length - hiddenCount})', _Filter.visible),
-            _chip('Đã ẩn ($hiddenCount)', _Filter.hidden),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final e in _statusLabels.entries) ...[
+                ChoiceChip(
+                  label: Text(e.value, style: const TextStyle(fontSize: 12.5)),
+                  selected: _status == e.key,
+                  onSelected: (_) {
+                    setState(() => _status = e.key);
+                    _load();
+                  },
+                ),
+                const SizedBox(width: 6),
+              ],
+            ]),
+          ),
+          const SizedBox(height: 6),
+          Row(children: [
+            Expanded(
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  isExpanded: true,
+                  value: _formId,
+                  hint: const Text('Mọi biểu mẫu',
+                      style: TextStyle(fontSize: 13)),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Mọi biểu mẫu',
+                            style: TextStyle(fontSize: 13))),
+                    for (final f in _forms)
+                      DropdownMenuItem<String?>(
+                        value: f['slug']?.toString(),
+                        child: Text(
+                            '${f['name']}${f['is_active'] == true ? '' : ' (đã ẩn)'}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13)),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    setState(() => _formId = v);
+                    _load();
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: _pickRange,
+              icon: const Icon(Icons.date_range, size: 18),
+              label: Text(
+                  hasDate
+                      ? '${displayDate(_range!.start)} – ${displayDate(_range!.end)}'
+                      : 'Khoảng ngày',
+                  style: const TextStyle(fontSize: 12.5)),
+            ),
+            if (hasDate)
+              IconButton(
+                tooltip: 'Bỏ lọc ngày',
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () {
+                  setState(() => _range = null);
+                  _load();
+                },
+              ),
           ]),
         ],
       ),
     );
   }
 
-  Widget _chip(String label, _Filter value) => ChoiceChip(
-        label: Text(label, style: const TextStyle(fontSize: 12.5)),
-        selected: _filter == value,
-        onSelected: (_) => setState(() => _filter = value),
-      );
-
-  Widget _buildBody() {
-    if (_loading) {
+  Widget _body() {
+    if (_loading && _records.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return ListView(
-        children: [
-          const SizedBox(height: 60),
-          const Icon(Icons.cloud_off, size: 42, color: AppColors.muted),
-          const SizedBox(height: 12),
-          Center(
-            child: Text(_error!,
-                style: const TextStyle(color: AppColors.inkSoft)),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: OutlinedButton(
-                onPressed: _load, child: const Text('Thử lại')),
-          ),
-        ],
-      );
+      return AdminErrorView(message: _error!, onRetry: _load);
     }
-    final list = _visibleList;
-    if (list.isEmpty) {
+    if (_records.isEmpty) {
       // ListView để vẫn kéo xuống làm mới được khi danh sách trống.
       return ListView(children: const [
         SizedBox(height: 80),
-        Center(child: Text('Không có hồ sơ nào.')),
+        Center(child: Text('Không có hồ sơ nào khớp bộ lọc.')),
       ]);
     }
-    return ListView.separated(
-      padding: const EdgeInsets.all(14),
-      itemCount: list.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, i) => _recordCard(list[i]),
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+      itemCount: _records.length + 1,
+      itemBuilder: (context, i) {
+        if (i == _records.length) {
+          return LoadMoreFooter(
+            shown: _records.length,
+            total: _total,
+            loading: _loadingMore,
+            onLoadMore: _loadMore,
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _recordCard(_records[i]),
+        );
+      },
     );
   }
 
   Widget _recordCard(Map<String, dynamic> r) {
     final id = r['id'].toString();
     final hidden = r['is_hidden'] == true;
+    final formActive = r['form_active'] != false;
     final busy = _busy.contains(id);
-    final owner = (r['owner_name']?.toString().trim().isNotEmpty ?? false)
-        ? '${r['owner_name']} (@${r['owner_username'] ?? ''})'
-        : '@${r['owner_username'] ?? 'không rõ'}';
+    // Hồ sơ hiện với chủ khi CẢ hồ sơ lẫn biểu mẫu đang hiện.
+    final visibleToOwner = !hidden && formActive;
 
     return Opacity(
-      opacity: hidden ? .6 : 1,
+      opacity: visibleToOwner ? 1 : .6,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(AppRadius.card),
           border: Border.all(
-              color: hidden ? const Color(0xFFF3C6C3) : AppColors.lineSoft),
+              color: visibleToOwner
+                  ? AppColors.lineSoft
+                  : const Color(0xFFF3C6C3)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,44 +333,29 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Flexible(
-                      child: Text(r['code']?.toString() ?? '',
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              fontFamily: 'monospace',
-                              color: AppColors.navy)),
-                    ),
-                    if (hidden) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFDECEA),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text('ĐÃ ẨN',
-                            style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w800,
-                                color: AppColors.flagRed)),
-                      ),
-                    ],
+                  Wrap(spacing: 6, runSpacing: 4, children: [
+                    Text(r['code']?.toString() ?? '',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: 'monospace',
+                            color: AppColors.navy)),
+                    if (hidden) const StatusPill('ĐÃ ẨN', AppColors.flagRed),
+                    if (!formActive)
+                      const StatusPill('BIỂU MẪU ẨN', AppColors.warn),
+                    if (r['is_edited'] == true)
+                      const StatusPill('ĐÃ SỬA', AppColors.cobalt),
                   ]),
-                  const SizedBox(height: 4),
-                  Text(_citizenName(r),
-                      style: const TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.ink)),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 5),
                   Text(r['form_name']?.toString() ?? '—',
                       style: const TextStyle(
-                          fontSize: 12.5, color: AppColors.inkSoft)),
-                  const SizedBox(height: 2),
-                  Text('Người tạo: $owner · ${_date(r)}',
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.ink)),
+                  const SizedBox(height: 3),
+                  Text(
+                      'Người tạo: @${r['owner_username'] ?? 'không rõ'} · '
+                      '${formatDateTime(r['created_at'])}',
                       style: const TextStyle(
                           fontSize: 11.5, color: AppColors.muted)),
                 ],
@@ -290,13 +371,16 @@ class _RecordsAdminTabState extends State<RecordsAdminTab> {
                           height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2.5)),
                     )
-                  : Switch(
-                      value: !hidden,
-                      onChanged: (show) => _toggleHidden(r, !show),
+                  : Semantics(
+                      label: hidden ? 'Hiện hồ sơ' : 'Ẩn hồ sơ',
+                      child: Switch(
+                        value: !hidden,
+                        onChanged: (show) => _toggleHidden(r, !show),
+                      ),
                     ),
               Text(hidden ? 'Đang ẩn' : 'Đang hiện',
-                  style: const TextStyle(
-                      fontSize: 11, color: AppColors.muted)),
+                  style:
+                      const TextStyle(fontSize: 11, color: AppColors.muted)),
             ]),
           ],
         ),

@@ -205,20 +205,48 @@ class AuthApiClient {
     await _api.put('/api/v1/users/$userId', jsonBody: changes);
   }
 
+  /// Admin: chi tiết TÀI KHOẢN (không có Profile CCCD / nội dung hồ sơ).
+  Future<Map<String, dynamic>> getUser(String userId) {
+    return _api.get('/api/v1/users/$userId');
+  }
+
+  /// Admin: gỡ khóa tạm do đăng nhập sai nhiều lần.
+  Future<void> unlockUser(String userId) async {
+    await _api.post('/api/v1/users/$userId/unlock');
+  }
+
+  /// Admin: đăng xuất tài khoản khỏi mọi thiết bị.
+  Future<void> revokeUserSessions(String userId) async {
+    await _api.post('/api/v1/users/$userId/revoke-sessions');
+  }
+
   // ── Audit (admin) ───────────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> listAuditLogs({
+  /// Nhật ký có lọc + phân trang. `actionGroup`: auth|user|record|profile|form.
+  /// `startDate`/`endDate` dạng YYYY-MM-DD (end tính trọn ngày).
+  Future<AdminPage> listAuditLogs({
     String? userId,
+    String? targetId,
     String? actionType,
-    int? limit,
+    String? actionGroup,
+    bool securityOnly = false,
+    String? startDate,
+    String? endDate,
+    int limit = 50,
+    int offset = 0,
   }) async {
     final body = await _api.get('/api/v1/audit-logs', query: {
       if (userId != null) 'user_id': userId,
+      if (targetId != null) 'target_id': targetId,
       if (actionType != null) 'action_type': actionType,
-      if (limit != null) 'limit': limit.toString(),
+      if (actionGroup != null) 'action_group': actionGroup,
+      if (securityOnly) 'security_only': 'true',
+      if (startDate != null) 'start_date': startDate,
+      if (endDate != null) 'end_date': endDate,
+      'limit': limit.toString(),
+      'offset': offset.toString(),
     });
-    final list = body['logs'];
-    return list is List ? list.cast<Map<String, dynamic>>() : <Map<String, dynamic>>[];
+    return AdminPage.fromBody(body, 'logs');
   }
 
   // ── Forms ───────────────────────────────────────────────────────────────
@@ -229,13 +257,22 @@ class AuthApiClient {
     return list is List ? list.cast<Map<String, dynamic>>() : <Map<String, dynamic>>[];
   }
 
-  Future<void> createForm(Map<String, dynamic> form) async {
-    await _api.post('/api/v1/forms', jsonBody: form);
+  /// Admin: mọi biểu mẫu (kể cả đang ẩn) + `record_count`.
+  /// Biểu mẫu KHÔNG được tạo / sửa trên app — chỉ ẩn / hiện.
+  Future<List<Map<String, dynamic>>> listAllForms() async {
+    final body = await _api.get('/api/v1/forms/all');
+    return _mapList(body['forms']);
   }
 
-  Future<void> updateForm(String slug, Map<String, dynamic> changes) async {
-    await _api.put('/api/v1/forms/$slug', jsonBody: changes);
+  /// Admin: ẩn / hiện biểu mẫu. Trả biểu mẫu sau khi cập nhật.
+  Future<Map<String, dynamic>> setFormActive(String slug, bool active) {
+    return _api.patch('/api/v1/forms/$slug/visibility',
+        jsonBody: {'is_active': active});
   }
+
+  static List<Map<String, dynamic>> _mapList(Object? list) => list is List
+      ? list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+      : <Map<String, dynamic>>[];
 
   // ── Scan records (P2) ───────────────────────────────────────────────────
 
@@ -299,19 +336,31 @@ class AuthApiClient {
 
   // ── Scan records (admin) ────────────────────────────────────────────────
 
-  /// Admin: hồ sơ của MỌI người dùng (kèm hồ sơ đã ẩn, có `is_hidden`,
-  /// `owner_username`, `owner_name`).
-  Future<List<Map<String, dynamic>>> listAllRecords({
-    int limit = 200,
+  /// Admin: danh sách QUẢN LÝ hồ sơ của mọi người dùng. Server KHÔNG trả nội
+  /// dung CCCD / trường bổ sung — chỉ mã, biểu mẫu, người tạo, thời gian,
+  /// `is_hidden`, `form_active`. `status`: all|visible|hidden|form_hidden.
+  Future<AdminPage> listAllRecords({
+    String? userId,
+    String? formId,
+    String status = 'all',
+    String? query,
+    String? startDate,
+    String? endDate,
+    int limit = 50,
     int offset = 0,
   }) async {
     final body = await _api.get('/api/v1/scan-records', query: {
       'all_users': 'true',
+      if (userId != null) 'user_id': userId,
+      if (formId != null) 'form_id': formId,
+      'status': status,
+      if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+      if (startDate != null) 'start_date': startDate,
+      if (endDate != null) 'end_date': endDate,
       'limit': limit.toString(),
       'offset': offset.toString(),
     });
-    final list = body['records'];
-    return list is List ? list.cast<Map<String, dynamic>>() : <Map<String, dynamic>>[];
+    return AdminPage.fromBody(body, 'records');
   }
 
   /// Admin: ẩn / hiện một hồ sơ với chủ hồ sơ. Trả record sau khi cập nhật.
@@ -362,5 +411,23 @@ class AuthApiClient {
   /// Xoá một profile.
   Future<void> deleteProfile(String id) async {
     await _api.delete('/api/v1/profiles/$id');
+  }
+}
+
+/// Một trang kết quả của API admin có phân trang (`total` = tổng số dòng khớp
+/// bộ lọc, dùng cho nút "Tải thêm").
+class AdminPage {
+  final List<Map<String, dynamic>> items;
+  final int total;
+
+  const AdminPage(this.items, this.total);
+
+  factory AdminPage.fromBody(Map<String, dynamic> body, String key) {
+    final raw = body[key];
+    final items = raw is List
+        ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+        : <Map<String, dynamic>>[];
+    final total = body['total'];
+    return AdminPage(items, total is int ? total : items.length);
   }
 }

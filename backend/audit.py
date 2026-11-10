@@ -10,7 +10,7 @@ Nhật ký kiểm toán (append-only) + endpoint `GET /audit-logs` (admin).
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -66,16 +66,51 @@ def __jsonb(value: Optional[dict]) -> Optional[Any]:
     return json.dumps(value, ensure_ascii=False)
 
 
+# Nhóm hành động cho bộ lọc (khớp tiền tố của `action`).
+ACTION_GROUPS = {
+    "auth": "auth.",
+    "user": "user.",
+    "record": "record.",
+    "profile": "profile.",
+    "form": "form.",
+}
+
+# Sự kiện bảo mật: đăng nhập sai, đổi mật khẩu, mọi thay đổi tài khoản do admin,
+# ẩn/hiện hồ sơ và biểu mẫu.
+SECURITY_ACTIONS = (
+    "auth.login_failed",
+    "auth.change_password",
+    "auth.change_password_failed",
+    "user.create",
+    "user.update",
+    "user.unlock",
+    "user.revoke_sessions",
+    "user.bootstrap_admin",
+    "record.hide",
+    "record.show",
+    "form.hide",
+    "form.show",
+)
+
+
 @router.get("", dependencies=[Depends(require_admin)])
 def list_audit_logs(
-    user_id: Optional[str] = Query(None),
-    action_type: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None, description="Người thực hiện"),
+    target_id: Optional[str] = Query(None, description="Đối tượng bị tác động"),
+    action_type: Optional[str] = Query(None, max_length=100),
+    action_group: Optional[str] = Query(None, description="auth|user|record|profile|form"),
+    security_only: bool = Query(False, description="Chỉ sự kiện bảo mật"),
     start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None, description="Tính trọn ngày cuối"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    """Danh sách nhật ký kiểm toán (admin-only), filter theo user/action/thời gian."""
+    """
+    Nhật ký kiểm toán (admin-only). Lọc theo người thực hiện, đối tượng, hành
+    động / nhóm hành động, sự kiện bảo mật, khoảng ngày. Trả `total` để phân
+    trang và `target_label` (tên đăng nhập / mã hồ sơ / tên biểu mẫu) để hiển
+    thị thay cho UUID. Không có nội dung CCCD trong nhật ký.
+    """
     clauses: list[str] = []
     params: list[Any] = []
 
@@ -86,22 +121,61 @@ def list_audit_logs(
             raise HTTPException(status_code=400, detail="user_id không hợp lệ")
         clauses.append("a.user_id = %s")
         params.append(parsed)
+    if target_id:
+        parsed_target = parse_uuid(target_id)
+        if parsed_target is None:
+            raise HTTPException(status_code=400, detail="target_id không hợp lệ")
+        clauses.append("a.target_id = %s")
+        params.append(parsed_target)
     if action_type:
         clauses.append("a.action = %s")
         params.append(action_type)
+    if action_group:
+        prefix = ACTION_GROUPS.get(action_group)
+        if prefix is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"action_group phải là: {', '.join(ACTION_GROUPS)}",
+            )
+        clauses.append("a.action LIKE %s")
+        params.append(prefix + "%")
+    if security_only:
+        clauses.append("a.action = ANY(%s)")
+        params.append(list(SECURITY_ACTIONS))
     if start_date:
         clauses.append("a.created_at >= %s")
         params.append(start_date)
     if end_date:
+        # DEF-28: tính TRỌN ngày cuối (đến trước 00:00 ngày hôm sau).
         clauses.append("a.created_at < %s")
-        params.append(end_date)
+        params.append(end_date + timedelta(days=1))
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    total = db.fetch_one(
+        f"SELECT COUNT(*) AS n FROM tblAuditLog a {where}", params
+    )["n"]
     rows = db.fetch_all(
         f"SELECT a.id, a.user_id, u.username, u.email, a.action, a.target_type, "
-        f"a.target_id, a.metadata, a.ip_address, a.device_info, a.created_at "
-        f"FROM tblAuditLog a LEFT JOIN tblUser u ON u.id = a.user_id {where} "
-        f"ORDER BY a.created_at DESC LIMIT %s OFFSET %s",
+        f"a.target_id, a.metadata, a.ip_address, a.device_info, a.created_at, "
+        f"(a.created_at AT TIME ZONE current_setting('TimeZone')) AS created_at_tz, "
+        f"CASE a.target_type "
+        f"  WHEN 'user' THEN tu.username "
+        f"  WHEN 'record' THEN tr.code "
+        f"  WHEN 'form' THEN tf.name "
+        f"  ELSE NULL END AS target_label "
+        f"FROM tblAuditLog a "
+        f"LEFT JOIN tblUser u ON u.id = a.user_id "
+        f"LEFT JOIN tblUser tu ON a.target_type = 'user' AND tu.id = a.target_id "
+        f"LEFT JOIN tblScanRecord tr ON a.target_type = 'record' AND tr.id = a.target_id "
+        f"LEFT JOIN tblFormType tf ON a.target_type = 'form' AND tf.id = a.target_id "
+        f"{where} ORDER BY a.created_at DESC LIMIT %s OFFSET %s",
         [*params, limit, offset],
     )
-    return {"logs": rows, "count": len(rows)}
+    logs = []
+    for r in rows:
+        aware = r.pop("created_at_tz", None)
+        if aware is not None:
+            # Thời điểm UTC có offset để client đổi về giờ máy (giống DEF-25).
+            r["created_at"] = aware.astimezone(timezone.utc).isoformat()
+        logs.append(r)
+    return {"logs": logs, "count": len(logs), "total": int(total)}

@@ -31,9 +31,13 @@ class PdfService {
     // `pw.Font.ttf(await rootBundle.load('assets/fonts/Roboto-Regular.ttf'))`.
     final pw.Font base;
     final pw.Font bold;
+    final pw.Font italic;
     try {
       base = await PdfGoogleFonts.robotoRegular();
       bold = await PdfGoogleFonts.robotoBold();
+      // DEF-42: dòng ngày in nghiêng — thiếu font italic thì thư viện rơi về
+      // Helvetica-Oblique (không có dấu tiếng Việt, mất chữ "ă").
+      italic = await PdfGoogleFonts.robotoItalic();
     } catch (_) {
       throw const PdfExportException(
           'Không tải được phông chữ tiếng Việt (cần mạng lần đầu). '
@@ -60,7 +64,7 @@ class PdfService {
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.symmetric(horizontal: 48, vertical: 56),
-        theme: pw.ThemeData.withFont(base: base, bold: bold),
+        theme: pw.ThemeData.withFont(base: base, bold: bold, italic: italic),
         build: (ctx) => [
           pw.Center(
             child: pw.Column(children: [

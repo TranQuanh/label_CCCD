@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'core/config/api_config.dart';
 import 'core/theme/app_theme.dart';
+import 'core/utils/temp_file_cleaner.dart';
 import 'data/session/session_store.dart';
 import 'features/auth/auth_screen.dart';
 import 'features/shell/home_shell.dart';
@@ -40,11 +43,47 @@ class SmartIdApp extends StatefulWidget {
 class _SmartIdAppState extends State<SmartIdApp> {
   bool _restored = false;
   bool _loggedIn = false;
+  // Trạng thái đăng nhập ở lần sessionStore thông báo trước — phát hiện lúc
+  // phiên chuyển từ "đang đăng nhập" sang "đã thoát".
+  bool _wasLoggedIn = false;
+
+  /// Điều hướng/hiện thông báo từ ngoài cây widget (phiên hết hạn ở bất kỳ màn nào).
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
     super.initState();
+    _wasLoggedIn = sessionStore.isLoggedIn;
+    sessionStore.addListener(_onSessionChanged);
+    // DEF-43: dọn PDF đã chia sẻ ở lần chạy trước (chứa dữ liệu CCCD).
+    unawaited(cleanSharedExports());
     _restore();
+  }
+
+  @override
+  void dispose() {
+    sessionStore.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  /// Phiên kết thúc KHÔNG do bấm đăng xuất (hết hạn / đổi mật khẩu) → về màn
+  /// đăng nhập + thông báo. Đăng xuất thường không có thông báo → bỏ qua, vì
+  /// AccountTab đã tự điều hướng (tránh push AuthScreen 2 lần).
+  void _onSessionChanged() {
+    final now = sessionStore.isLoggedIn;
+    final ended = _wasLoggedIn && !now;
+    _wasLoggedIn = now;
+    if (!ended) return;
+    final message = sessionStore.takeSessionEndMessage();
+    if (message == null) return;
+    _navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const AuthScreen()),
+      (r) => false,
+    );
+    _messengerKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _restore() async {
@@ -73,6 +112,8 @@ class _SmartIdAppState extends State<SmartIdApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
+      scaffoldMessengerKey: _messengerKey,
       title: 'Định danh SmartID',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),

@@ -232,22 +232,30 @@ def login(body: LoginBody, request: Request) -> dict:
     if not user["is_active"]:
         raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
 
-    # DEF-16: khóa đã hết hạn → bắt đầu đếm lại từ 0 (sai 1 lần sau khi hết
-    # khóa chỉ là lần sai thứ 1, không bị khóa lại ngay). Lần ghi bên dưới
-    # (sai hoặc đúng mật khẩu) đều đặt lại locked_until.
-    prev_fails = user["failed_login_count"] or 0
-    if user["locked_until"] is not None:
-        prev_fails = 0
-
     if not verify_password(body.password, user["password_hash"]):
-        fails = prev_fails + 1
+        # DEF-39: tăng bộ đếm NGAY TRONG PostgreSQL (một câu UPDATE nguyên tử).
+        # Đọc giá trị ra Python rồi ghi đè sẽ mất lượt đếm khi nhiều request
+        # sai mật khẩu chạy song song → brute-force vượt được cơ chế khóa.
+        # DEF-16: khóa đã hết hạn → đếm lại từ 1 (không bị khóa lại ngay).
+        row = db.fetch_one(
+            "UPDATE tblUser SET "
+            "failed_login_count = CASE "
+            "  WHEN locked_until IS NOT NULL AND locked_until <= %s THEN 1 "
+            "  ELSE failed_login_count + 1 END, "
+            "locked_until = CASE "
+            "  WHEN locked_until IS NOT NULL AND locked_until <= %s THEN NULL "
+            "  ELSE locked_until END "
+            "WHERE id = %s RETURNING failed_login_count",
+            (now, now, user["id"]),
+        )
+        fails = int(row["failed_login_count"]) if row else 1
         locked_until = None
         if fails >= config.MAX_LOGIN_FAILS:
             locked_until = _now_naive() + timedelta(minutes=config.LOCK_MINUTES)
-        db.execute(
-            "UPDATE tblUser SET failed_login_count = %s, locked_until = %s WHERE id = %s",
-            (fails, locked_until, user["id"]),
-        )
+            db.execute(
+                "UPDATE tblUser SET locked_until = %s WHERE id = %s",
+                (locked_until, user["id"]),
+            )
         audit(user["id"], "auth.login_failed", "user", user["id"],
               {"attempt": fails}, ip, device)
         if locked_until:

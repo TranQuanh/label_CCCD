@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
-import '../../data/api/api_exception.dart';
+import '../../core/validation/validators.dart';
 import '../../data/api/auth_api_client.dart';
 import '../../data/session/session_store.dart';
+import 'admin_common.dart';
+import 'user_detail_admin_screen.dart';
 
-/// Tab quản lý người dùng (admin): danh sách, đổi vai trò, khóa/mở khóa.
+/// Tab quản lý người dùng (admin): danh sách, tìm kiếm, lọc, tạo tài khoản.
+/// Bấm một tài khoản → màn chi tiết (đổi vai trò, khóa/mở khóa, gỡ khóa tạm,
+/// đặt lại mật khẩu, đăng xuất mọi thiết bị, xem hồ sơ / nhật ký).
 class UsersAdminTab extends StatefulWidget {
   const UsersAdminTab({super.key});
 
@@ -14,10 +18,19 @@ class UsersAdminTab extends StatefulWidget {
 }
 
 class _UsersAdminTabState extends State<UsersAdminTab> {
+  static const _filters = {
+    'all': 'Tất cả',
+    'admin': 'Quản trị viên',
+    'user': 'Người dùng',
+    'locked': 'Bị khóa',
+  };
+
   final AuthApiClient _auth = AuthApiClient();
+  final TextEditingController _search = TextEditingController();
   List<Map<String, dynamic>>? _users;
   String? _error;
   bool _loading = true;
+  String _filter = 'all';
 
   @override
   void initState() {
@@ -27,6 +40,7 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
 
   @override
   void dispose() {
+    _search.dispose();
     _auth.dispose();
     super.dispose();
   }
@@ -39,113 +53,124 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
     try {
       final users = await _auth.listUsers();
       if (mounted) setState(() => _users = users);
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.userMessage);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Không kết nối được máy chủ.');
+    } catch (e) {
+      if (mounted) setState(() => _error = adminErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _changeRole(Map<String, dynamic> user, String newRole) async {
-    try {
-      await _auth.updateUser(user['id'].toString(), {'role': newRole});
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              'Đã đổi vai trò của ${user['username']} sang ${_roleLabel(newRole)} — người dùng phải đăng nhập lại.')));
-      await _load();
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.userMessage)));
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Lỗi máy chủ.')));
-      }
-    }
+  /// Khóa tạm do đăng nhập sai (locked_until còn hiệu lực).
+  static bool _tempLocked(Map<String, dynamic> u) {
+    final until = parseServerTime(u['locked_until']);
+    return until != null && until.isAfter(DateTime.now());
   }
 
-  /// Nhãn hiển thị của role (chỉ còn 2 role: admin, user).
-  static String _roleLabel(String role) =>
-      role == 'admin' ? 'Quản trị viên' : 'Người dùng';
-
-  Future<void> _toggleActive(Map<String, dynamic> user) async {
-    // target = trạng thái is_active MỚI: false → khóa, true → mở khóa.
-    final target = !(user['is_active'] as bool? ?? true);
-    final label = target ? 'mở khóa' : 'khóa';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('${target ? 'Mở khóa' : 'Khóa'} tài khoản?'),
-        content: Text('Tài khoản "${user['username']}" sẽ được ${target ? 'mở khóa' : 'khóa'}.\n'
-            'Phiên hiện tại của người dùng bị vô hiệu hóa.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Huỷ')),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(label,
-                style: const TextStyle(color: AppColors.flagRed)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await _auth.updateUser(user['id'].toString(), {'is_active': target});
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Đã $label tài khoản "${user['username']}".')));
-      await _load();
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.userMessage)));
+  List<Map<String, dynamic>> get _visible {
+    final q = _search.text.trim().toLowerCase();
+    return (_users ?? []).where((u) {
+      final active = u['is_active'] != false;
+      switch (_filter) {
+        case 'admin':
+          if (u['role'] != 'admin') return false;
+        case 'user':
+          if (u['role'] == 'admin') return false;
+        case 'locked':
+          if (active && !_tempLocked(u)) return false;
       }
+      if (q.isEmpty) return true;
+      return [u['username'], u['email'], u['full_name']]
+          .map((e) => (e ?? '').toString().toLowerCase())
+          .any((e) => e.contains(q));
+    }).toList();
+  }
+
+  Future<void> _openDetail(Map<String, dynamic> user) async {
+    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => UserDetailAdminScreen(userId: user['id'].toString()),
+    ));
+    if (changed == true) await _load();
+  }
+
+  Future<void> _createUser() async {
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (_) => _CreateUserDialog(auth: _auth),
+    );
+    if (created == true) {
+      if (mounted) showAdminSnack(context, 'Đã tạo tài khoản.');
+      await _load();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: _buildBody(),
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'admin_create_user',
+        tooltip: 'Tạo tài khoản',
+        backgroundColor: AppColors.flagRed,
+        foregroundColor: Colors.white,
+        onPressed: _createUser,
+        icon: const Icon(Icons.person_add_alt),
+        label: const Text('Tạo tài khoản'),
+      ),
+      body: Column(children: [
+        _toolbar(),
+        Expanded(child: RefreshIndicator(onRefresh: _load, child: _body())),
+      ]),
     );
   }
 
-  Widget _buildBody() {
-    if (_loading) {
+  Widget _toolbar() => Container(
+        color: Colors.white,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+        child: Column(children: [
+          TextField(
+            controller: _search,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true,
+              prefixIcon: const Icon(Icons.search, size: 20),
+              hintText: 'Tìm tên đăng nhập, email, họ tên',
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (final e in _filters.entries) ...[
+                ChoiceChip(
+                  label: Text(e.value, style: const TextStyle(fontSize: 12.5)),
+                  selected: _filter == e.key,
+                  onSelected: (_) => setState(() => _filter = e.key),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ]),
+          ),
+        ]),
+      );
+
+  Widget _body() {
+    if (_loading && _users == null) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return ListView(
-        children: [
-          const SizedBox(height: 60),
-          const Icon(Icons.cloud_off, size: 42, color: AppColors.muted),
-          const SizedBox(height: 12),
-          Center(
-            child: Text(_error!,
-                style: const TextStyle(color: AppColors.inkSoft)),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: OutlinedButton(
-                onPressed: _load, child: const Text('Thử lại')),
-          ),
-        ],
-      );
+      return AdminErrorView(message: _error!, onRetry: _load);
     }
-    final users = _users ?? [];
+    final users = _visible;
     if (users.isEmpty) {
-      return const Center(child: Text('Chưa có tài khoản nào.'));
+      return ListView(children: const [
+        SizedBox(height: 80),
+        Center(child: Text('Không có tài khoản nào khớp.')),
+      ]);
     }
     return ListView.separated(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 90),
       itemCount: users.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, i) => _userCard(users[i]),
@@ -156,120 +181,190 @@ class _UsersAdminTabState extends State<UsersAdminTab> {
     final username = user['username']?.toString() ?? '';
     final fullName = user['full_name']?.toString() ?? '';
     final email = user['email']?.toString() ?? '';
-    final rawRole = user['role']?.toString() ?? 'user';
-    final role = (rawRole == 'admin') ? 'admin' : 'user';
-    final active = user['is_active'] as bool? ?? true;
+    final role = user['role']?.toString() ?? 'user';
+    final active = user['is_active'] != false;
     final isSelf = user['id'].toString() == sessionStore.user?.id;
+    final records = (user['record_count'] as num?)?.toInt() ?? 0;
+    final display = fullName.isNotEmpty ? fullName : username;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: AppColors.lineSoft),
+        side: const BorderSide(color: AppColors.lineSoft),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openDetail(user),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(children: [
             CircleAvatar(
-              radius: 18,
-              backgroundColor: AppColors.navySoft,
+              radius: 19,
+              backgroundColor:
+                  active ? AppColors.navySoft : AppColors.inactive,
               child: Text(
-                  (fullName.isNotEmpty ? fullName : username)
-                          .substring(0, 1)
-                          .toUpperCase(),
+                  display.isEmpty ? '?' : display.substring(0, 1).toUpperCase(),
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(fullName.isEmpty ? username : fullName,
+                  Text('$display${isSelf ? ' (bạn)' : ''}',
                       style: const TextStyle(
                           fontSize: 14.5, fontWeight: FontWeight.w700)),
-                  Text(email.isEmpty ? username : email,
+                  const SizedBox(height: 2),
+                  Text('@$username · $email',
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.muted)),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 6, runSpacing: 4, children: [
+                    StatusPill(roleLabel(role),
+                        role == 'admin' ? AppColors.cobalt : AppColors.inkSoft),
+                    if (!active) const StatusPill('KHÓA', AppColors.flagRed),
+                    if (active && _tempLocked(user))
+                      const StatusPill('KHÓA TẠM', AppColors.warn),
+                    StatusPill('$records hồ sơ', AppColors.muted),
+                  ]),
                 ],
               ),
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-              decoration: BoxDecoration(
-                color: role == 'admin'
-                    ? const Color(0xFFEAF0FF)
-                    : AppColors.tint,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(_roleLabel(role),
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: role == 'admin'
-                          ? AppColors.cobalt
-                          : AppColors.inkSoft)),
-            ),
-            const SizedBox(width: 8),
-            if (!active)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFDECEA),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text('KHÓA',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.flagRed)),
-              ),
+            const Icon(Icons.chevron_right, color: AppColors.hint),
           ]),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: role,
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: 'Vai trò',
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'admin', child: Text('Quản trị viên')),
-                  DropdownMenuItem(value: 'user', child: Text('Người dùng')),
-                ],
-                onChanged: isSelf
-                    ? null
-                    : (v) {
-                        if (v != null && v != role) _changeRole(user, v);
-                      },
-              ),
-            ),
-            const SizedBox(width: 10),
-            if (!isSelf)
-              OutlinedButton(
-                onPressed: () => _toggleActive(user),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor:
-                      active ? AppColors.flagRed : AppColors.cobalt,
-                  side: BorderSide(
-                      color: active
-                          ? const Color(0xFFF3C6C3)
-                          : AppColors.lineSoft),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                child: Text(active ? 'Khóa' : 'Mở khóa',
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-              ),
-          ]),
-        ],
+        ),
       ),
+    );
+  }
+}
+
+/// Hộp thoại admin tạo tài khoản mới (cùng quy tắc với đăng ký).
+class _CreateUserDialog extends StatefulWidget {
+  final AuthApiClient auth;
+
+  const _CreateUserDialog({required this.auth});
+
+  @override
+  State<_CreateUserDialog> createState() => _CreateUserDialogState();
+}
+
+class _CreateUserDialogState extends State<_CreateUserDialog> {
+  final _username = TextEditingController();
+  final _fullName = TextEditingController();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  String _role = 'user';
+  bool _saving = false;
+  Map<String, String> _err = const {};
+  String? _apiError;
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _fullName.dispose();
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final e = <String, String>{};
+    if (!Validators.username(_username.text)) {
+      e['username'] = 'Tên đăng nhập 3–32 ký tự (chữ/số/_), bắt đầu bằng chữ';
+    }
+    if (!Validators.email(_email.text)) e['email'] = 'Email không hợp lệ';
+    if (!Validators.strongPassword(_password.text)) {
+      e['password'] = 'Mật khẩu tối thiểu 8 ký tự, có chữ và số';
+    }
+    setState(() {
+      _err = e;
+      _apiError = null;
+    });
+    if (e.isNotEmpty) return;
+
+    setState(() => _saving = true);
+    try {
+      await widget.auth.createUser(
+        username: _username.text.trim(),
+        email: _email.text.trim(),
+        password: _password.text,
+        fullName: _fullName.text.trim(),
+        role: _role,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (err) {
+      if (mounted) setState(() => _apiError = adminErrorMessage(err));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Widget _field(String label, TextEditingController c, String key,
+          {bool obscure = false, TextInputType? keyboard}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: TextField(
+          controller: c,
+          obscureText: obscure,
+          keyboardType: keyboard,
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: label,
+            errorText: _err[key],
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Tạo tài khoản'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          _field('Tên đăng nhập', _username, 'username'),
+          _field('Họ và tên (tuỳ chọn)', _fullName, 'fullName'),
+          _field('Email', _email, 'email', keyboard: TextInputType.emailAddress),
+          _field('Mật khẩu', _password, 'password', obscure: true),
+          DropdownButtonFormField<String>(
+            initialValue: _role,
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Vai trò',
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'user', child: Text('Người dùng')),
+              DropdownMenuItem(value: 'admin', child: Text('Quản trị viên')),
+            ],
+            onChanged: (v) => setState(() => _role = v ?? 'user'),
+          ),
+          if (_apiError != null) ...[
+            const SizedBox(height: 10),
+            Text(_apiError!,
+                style: const TextStyle(color: AppColors.flagRed, fontSize: 12.5)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Huỷ'),
+        ),
+        ElevatedButton(
+          onPressed: _saving ? null : _submit,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Tạo'),
+        ),
+      ],
     );
   }
 }

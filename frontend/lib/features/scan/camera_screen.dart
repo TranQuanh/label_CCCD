@@ -52,13 +52,21 @@ class _CameraScreenState extends State<CameraScreen> {
     _init();
   }
 
+  /// Khởi tạo camera.
+  ///
+  /// DEF-41: KHÔNG đặt timeout cho `initialize()` — plugin camera xin quyền
+  /// ngay bên trong hàm này, timeout sẽ tính cả thời gian người dùng đọc hộp
+  /// thoại xin quyền. Khi lỗi luôn `dispose()` controller (tránh camera bị mở
+  /// ngầm, chấm xanh vẫn sáng) và KHÔNG tự mở thư viện ảnh (sẽ đè lên hộp
+  /// thoại xin quyền) — người dùng tự chọn "Thử lại" hoặc "Chọn từ thư viện".
   Future<void> _init() async {
+    CameraController? ctrl;
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         if (mounted) {
-          setState(() => _error = 'Không tìm thấy camera, tự động chuyển sang thư viện ảnh.');
-          unawaited(_pickFromGallery());
+          setState(() => _error =
+              'Không tìm thấy camera. Hãy chọn ảnh từ thư viện.');
         }
         return;
       }
@@ -81,21 +89,18 @@ class _CameraScreenState extends State<CameraScreen> {
 
       if (selectedCamera == null) {
         if (mounted) {
-          setState(() => _error = 'Không thể truy cập camera.');
-          unawaited(_pickFromGallery());
+          setState(() => _error =
+              'Không thể truy cập camera. Hãy chọn ảnh từ thư viện.');
         }
         return;
       }
 
       // Use a resolution that's more compatible with emulators
-      final ctrl =
-          CameraController(selectedCamera, ResolutionPreset.high, enableAudio: false);
+      ctrl = CameraController(selectedCamera, ResolutionPreset.high,
+          enableAudio: false);
 
-      // Initialize with timeout to prevent hanging
-      await ctrl.initialize().timeout(
-        const Duration(seconds: 15),
-        onTimeout: () => throw Exception('Camera initialization timeout'),
-      );
+      // Không timeout: plugin tự ném CameraException khi bị từ chối quyền.
+      await ctrl.initialize();
 
       if (!mounted) {
         await ctrl.dispose();
@@ -105,22 +110,56 @@ class _CameraScreenState extends State<CameraScreen> {
       // Small delay to let camera stabilize
       await Future.delayed(const Duration(milliseconds: 500));
 
+      if (!mounted) {
+        await ctrl.dispose();
+        return;
+      }
       setState(() {
         _controller = ctrl;
         _ready = true;
         _error = null; // Clear any previous error
       });
-    } on TimeoutException catch (_) {
+    } on CameraException catch (e) {
+      await _safeDispose(ctrl);
       if (mounted) {
-        setState(() => _error = 'Khởi tạo camera hết thời gian. Vui lòng thử lại hoặc sử dụng thư viện ảnh.');
-        unawaited(_pickFromGallery());
+        setState(() => _error = _isPermissionError(e.code)
+            ? 'Chưa được cấp quyền camera. Bật quyền trong Cài đặt rồi bấm '
+                '"Thử lại", hoặc chọn ảnh từ thư viện.'
+            : 'Không mở được camera (${e.code}). Bấm "Thử lại" hoặc chọn ảnh '
+                'từ thư viện.');
       }
-    } catch (e) {
+    } catch (_) {
+      await _safeDispose(ctrl);
       if (mounted) {
-        setState(() => _error = 'Không mở được camera: $e\nTự động chuyển sang thư viện ảnh.');
-        unawaited(_pickFromGallery());
+        setState(() => _error =
+            'Không mở được camera. Bấm "Thử lại" hoặc chọn ảnh từ thư viện.');
       }
     }
+  }
+
+  /// Mã lỗi quyền của plugin camera (khác nhau giữa các bản / nền tảng).
+  static bool _isPermissionError(String code) =>
+      code.startsWith('CameraAccessDenied') ||
+      code == 'cameraPermission' ||
+      code.contains('Permission');
+
+  static Future<void> _safeDispose(CameraController? ctrl) async {
+    if (ctrl == null) return;
+    try {
+      await ctrl.dispose();
+    } catch (_) {
+      // Controller có thể chưa khởi tạo xong — bỏ qua.
+    }
+  }
+
+  /// Thử mở camera lại (sau khi người dùng cấp quyền trong Cài đặt).
+  Future<void> _retryInit() async {
+    if (_busy) return;
+    setState(() {
+      _error = null;
+      _ready = false;
+    });
+    await _init();
   }
 
   Future<void> _toggleFlash() async {
@@ -300,7 +339,23 @@ class _CameraScreenState extends State<CameraScreen> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70, fontSize: 14)),
               const SizedBox(height: 24),
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              // DEF-41: mở lại camera sau khi người dùng đã cấp quyền.
+              ElevatedButton.icon(
+                onPressed: _busy ? null : _retryInit,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Thử lại'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.star,
+                  foregroundColor: AppColors.navy,
+                  elevation: 0,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
                 OutlinedButton.icon(
                   onPressed: _pickFromGallery,
                   icon: const Icon(Icons.photo_library_outlined, size: 18),
@@ -310,7 +365,6 @@ class _CameraScreenState extends State<CameraScreen> {
                     side: const BorderSide(color: Colors.white38),
                   ),
                 ),
-                const SizedBox(width: 12),
                 OutlinedButton(
                   onPressed: () => Navigator.of(context).maybePop(),
                   style: OutlinedButton.styleFrom(

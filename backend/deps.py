@@ -69,7 +69,9 @@ def get_current_user(
     if user is None:
         raise _unauthorized("Tài khoản không tồn tại")
     if not user["is_active"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
+        # DEF-40: trả 401 (không phải 403) để app coi là phiên kết thúc và đưa
+        # về màn đăng nhập. Endpoint /auth/login vẫn trả 403 cho tài khoản khóa.
+        raise _unauthorized("Tài khoản đã bị khóa")
     if user["token_version"] != payload.get("tok_ver"):
         raise _unauthorized("Phiên đã bị thu hồi (thông tin tài khoản thay đổi)")
 

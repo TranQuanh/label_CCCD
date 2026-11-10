@@ -8,13 +8,19 @@ bị chỉ cache/mock). Nó thay chỗ lưu RAM trong `sessionStore` phía front
 
 Quyền hạn (RBAC):
   - POST /scan-records       — mọi người dùng đã đăng nhập (user/admin).
-  - GET  /scan-records       — user/admin: hồ sơ của chính mình; admin có thể
-                               truyền `?user_id=` để xem của người khác.
-  - GET  /scan-records/{id}  — chủ sở hữu / admin.
-  - GET  /scan-records?all_users=true     — admin: hồ sơ của mọi người dùng.
-  - PATCH /scan-records/{id}/visibility   — admin: ẩn / hiện hồ sơ. Hồ sơ bị ẩn
-                               không hiện trong lịch sử của chủ hồ sơ và chủ hồ sơ
-                               không xem/sửa được (404); admin vẫn thấy.
+  - GET  /scan-records       — hồ sơ của chính mình (đầy đủ nội dung).
+  - GET/PATCH /scan-records/{id} — CHỈ chủ sở hữu (kể cả admin cũng chỉ xem/sửa
+                               được hồ sơ của chính mình).
+  - GET  /scan-records?all_users=true     — admin: danh sách hồ sơ của mọi người
+                               dùng, CHỈ thông tin quản lý (mã, biểu mẫu, người
+                               tạo, thời gian, trạng thái). KHÔNG trả nội dung
+                               CCCD (`extracted_data`) hay trường bổ sung (`supp`):
+                               admin không được xem thông tin của người dùng.
+  - PATCH /scan-records/{id}/visibility   — admin: ẩn / hiện hồ sơ.
+
+Hồ sơ hiện với chủ hồ sơ khi CẢ hồ sơ đang hiện (`is_hidden = FALSE`) VÀ biểu
+mẫu của nó đang hiện (`tblFormType.is_active`). Ngược lại coi như không tồn tại
+với chủ hồ sơ (không thấy trong lịch sử, xem/sửa → 404). Dữ liệu không bị xoá.
 
 Mã hồ sơ (`code`) do SERVER cấp (quyết định thiết kế) — client không tự sinh nữa.
 Dạng: HS<yyyyMMdd>-<6 chữ số ngẫu nhiên>.
@@ -30,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -163,13 +169,30 @@ def _created_at_utc(row: dict) -> Optional[str]:
     return naive.isoformat() if naive else None
 
 
+def _serialize_admin(row: dict) -> dict:
+    """1 dòng DB → JSON cho admin: CHỈ thông tin quản lý, không có nội dung
+    CCCD (`extracted_data`) hay trường bổ sung (`supp`)."""
+    return {
+        "id": str(row["id"]),
+        "code": row.get("code"),
+        "form_id": row.get("form_slug"),
+        "form_name": row.get("form_name"),
+        "form_active": row.get("form_active") is not False,
+        "is_edited": bool(row.get("is_edited")),
+        "is_hidden": bool(row.get("is_hidden")),
+        "owner_id": str(row["user_id"]) if row.get("user_id") else None,
+        "owner_username": row.get("owner_username"),
+        "created_at": _created_at_utc(row),
+    }
+
+
 def _record_join() -> str:
     """SELECT ... FROM bảng gốc + biểu mẫu + chủ hồ sơ."""
     return (
         f"SELECT r.id, r.code, r.user_id, r.extracted_data, r.supp, "
         f"r.card_side, r.parse_ok, r.is_edited, r.is_hidden, r.created_at, "
         f"(r.created_at AT TIME ZONE current_setting('TimeZone')) AS created_at_tz, "
-        f"f.slug AS form_slug, f.name AS form_name, "
+        f"f.slug AS form_slug, f.name AS form_name, f.is_active AS form_active, "
         f"u.username AS owner_username, u.full_name AS owner_name "
         f"FROM tblScanRecord r "
         f"LEFT JOIN tblFormType f ON f.id = r.form_type_id "
@@ -177,25 +200,46 @@ def _record_join() -> str:
     )
 
 
+def _admin_join() -> str:
+    """SELECT cho admin — KHÔNG lấy cột nội dung (extracted_data, supp)."""
+    return (
+        f"SELECT r.id, r.code, r.user_id, r.is_edited, r.is_hidden, r.created_at, "
+        f"(r.created_at AT TIME ZONE current_setting('TimeZone')) AS created_at_tz, "
+        f"f.slug AS form_slug, f.name AS form_name, f.is_active AS form_active, "
+        f"u.username AS owner_username "
+        f"FROM tblScanRecord r "
+        f"LEFT JOIN tblFormType f ON f.id = r.form_type_id "
+        f"LEFT JOIN tblUser u ON u.id = r.user_id"
+    )
+
+
+# Hồ sơ hiện với chủ hồ sơ: chính hồ sơ đang hiện VÀ biểu mẫu đang hiện
+# (hồ sơ không gắn biểu mẫu — dữ liệu cũ — vẫn hiện).
+_VISIBLE_TO_OWNER = "r.is_hidden = FALSE AND (f.id IS NULL OR f.is_active = TRUE)"
+
+
 def _get_record_accessible(record_id: str, user: dict) -> dict:
     """
-    Lấy 1 record mà user được phép xem: owner/admin.
-    404 nếu không tồn tại HOẶC không có quyền (không lộ sự tồn tại).
-    Hồ sơ bị admin ẩn coi như không tồn tại với chủ hồ sơ (không xem/sửa được).
+    Lấy 1 record của CHÍNH user (kể cả admin — admin không được xem nội dung hồ
+    sơ của người khác). 404 nếu không tồn tại / không phải chủ / đang bị ẩn
+    (hồ sơ ẩn hoặc biểu mẫu ẩn) — không lộ sự tồn tại.
     Id sai định dạng UUID → 404 (DEF-23, thay vì lỗi 500 từ PostgreSQL).
     """
     record_id = parse_uuid(record_id)
     if record_id is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
-    role = user["role"]
-    if role == "admin":
-        query = f"{_record_join()} WHERE r.id = %s"
-        params = (record_id,)
-    else:
-        query = (f"{_record_join()} WHERE r.id = %s AND r.user_id = %s "
-                 f"AND r.is_hidden = FALSE")
-        params = (record_id, user["id"])
-    row = db.fetch_one(query, params)
+    row = db.fetch_one(
+        f"{_record_join()} WHERE r.id = %s AND r.user_id = %s AND {_VISIBLE_TO_OWNER}",
+        (record_id, user["id"]),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    return row
+
+
+def _get_record_admin(record_id: str) -> dict:
+    """Admin: thông tin quản lý của một hồ sơ bất kỳ (không có nội dung)."""
+    row = db.fetch_one(f"{_admin_join()} WHERE r.id = %s", (record_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
     return row
@@ -241,54 +285,112 @@ def submit_record(
     return {"message": "Đã gửi hồ sơ", "record_id": record_id, "code": code}
 
 
+_ADMIN_STATUS_FILTERS = ("all", "visible", "hidden", "form_hidden")
+
+
 @router.get("")
 def list_records(
     request: Request,
     user: dict = Depends(get_current_user),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user_id: Optional[str] = Query(None, description="Chỉ admin: xem hồ sơ của user khác"),
-    all_users: bool = Query(False, description="Chỉ admin: xem hồ sơ của mọi người dùng"),
+    all_users: bool = Query(False, description="Chỉ admin: hồ sơ của mọi người dùng"),
+    user_id: Optional[str] = Query(None, description="Admin: lọc theo người tạo"),
+    form_id: Optional[str] = Query(None, max_length=100, description="Admin: lọc theo slug biểu mẫu"),
+    status_filter: str = Query("all", alias="status", description="Admin: all|visible|hidden|form_hidden"),
+    q: Optional[str] = Query(None, max_length=100, description="Admin: tìm mã hồ sơ / tên đăng nhập"),
+    start_date: Optional[date] = Query(None, description="Admin: từ ngày (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="Admin: đến hết ngày (YYYY-MM-DD)"),
 ) -> dict:
     """
-    Lịch sử hồ sơ từ PostgreSQL.
-
-    user: hồ sơ của chính mình, TRỪ hồ sơ bị admin ẩn.
-    admin: của mình; `?user_id=` của một người khác; `?all_users=true` của mọi
-    người (kèm cả hồ sơ đã ẩn, để quản lý ẩn/hiện).
+    - Mặc định: lịch sử hồ sơ của CHÍNH người gọi (đầy đủ nội dung), trừ hồ sơ
+      đang ẩn hoặc thuộc biểu mẫu đang ẩn.
+    - Admin + (`all_users=true` hoặc `user_id=`): danh sách QUẢN LÝ hồ sơ của mọi
+      người, kèm bộ lọc. KHÔNG trả nội dung CCCD / trường bổ sung. Trả thêm
+      `total` để phân trang.
     """
-    role = user["role"]
+    is_admin = user["role"] == "admin"
+    if is_admin and (all_users or user_id):
+        return _list_records_admin(
+            limit=limit, offset=offset, user_id=user_id, form_id=form_id,
+            status_filter=status_filter, q=q,
+            start_date=start_date, end_date=end_date,
+        )
 
-    clauses: list[str] = []
-    params: list[Any] = []
-    query = f"{_record_join()}"
-
-    if role == "admin":
-        if all_users:
-            pass  # không lọc theo người dùng
-        elif user_id:
-            # DEF-23: user_id sai định dạng UUID → 400 thay vì lỗi 500.
-            parsed = parse_uuid(user_id)
-            if parsed is None:
-                raise HTTPException(status_code=400, detail="user_id không hợp lệ")
-            clauses.append("r.user_id = %s")
-            params.append(parsed)
-        else:
-            clauses.append("r.user_id = %s")
-            params.append(user["id"])
-    else:  # user thường
-        clauses.append("r.user_id = %s")
-        params.append(user["id"])
-        clauses.append("r.is_hidden = FALSE")
-
-    if clauses:
-        query += " WHERE " + " AND ".join(clauses)
-    query += " ORDER BY r.created_at DESC LIMIT %s OFFSET %s"
-
-    rows = db.fetch_all(query, [*params, limit, offset])
+    rows = db.fetch_all(
+        f"{_record_join()} WHERE r.user_id = %s AND {_VISIBLE_TO_OWNER} "
+        f"ORDER BY r.created_at DESC LIMIT %s OFFSET %s",
+        (user["id"], limit, offset),
+    )
     return {
         "records": [_serialize(r) for r in rows],
         "count": len(rows),
+    }
+
+
+def _list_records_admin(
+    *,
+    limit: int,
+    offset: int,
+    user_id: Optional[str],
+    form_id: Optional[str],
+    status_filter: str,
+    q: Optional[str],
+    start_date: Optional[date],
+    end_date: Optional[date],
+) -> dict:
+    """Danh sách quản lý hồ sơ cho admin (không có nội dung hồ sơ)."""
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if user_id:
+        # DEF-23: user_id sai định dạng UUID → 400 thay vì lỗi 500.
+        parsed = parse_uuid(user_id)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="user_id không hợp lệ")
+        clauses.append("r.user_id = %s")
+        params.append(parsed)
+    if form_id:
+        clauses.append("f.slug = %s")
+        params.append(form_id.strip())
+    if status_filter not in _ADMIN_STATUS_FILTERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status phải là: {', '.join(_ADMIN_STATUS_FILTERS)}",
+        )
+    if status_filter == "visible":
+        clauses.append(_VISIBLE_TO_OWNER)
+    elif status_filter == "hidden":
+        clauses.append("r.is_hidden = TRUE")
+    elif status_filter == "form_hidden":
+        clauses.append("f.is_active = FALSE")
+    if q and q.strip():
+        clauses.append("(r.code ILIKE %s OR u.username ILIKE %s)")
+        pattern = f"%{q.strip()}%"
+        params.extend([pattern, pattern])
+    if start_date:
+        clauses.append("r.created_at >= %s")
+        params.append(start_date)
+    if end_date:
+        # Tính TRỌN ngày cuối (đến trước 00:00 ngày hôm sau).
+        clauses.append("r.created_at < %s")
+        params.append(end_date + timedelta(days=1))
+
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    total = db.fetch_one(
+        "SELECT COUNT(*) AS n FROM tblScanRecord r "
+        "LEFT JOIN tblFormType f ON f.id = r.form_type_id "
+        f"LEFT JOIN tblUser u ON u.id = r.user_id{where}",
+        params,
+    )["n"]
+    rows = db.fetch_all(
+        f"{_admin_join()}{where} ORDER BY r.created_at DESC LIMIT %s OFFSET %s",
+        [*params, limit, offset],
+    )
+    return {
+        "records": [_serialize_admin(r) for r in rows],
+        "count": len(rows),
+        "total": int(total),
     }
 
 
@@ -304,7 +406,7 @@ def update_record(
     user: dict = Depends(get_current_user),
 ) -> dict:
     """
-    Cập nhật thông tin một hồ sơ đã gửi (chủ sở hữu / admin).
+    Cập nhật thông tin một hồ sơ đã gửi (CHỈ chủ sở hữu).
 
     Chỉ cho phép sửa `extracted_data`, `supp`, `parse_ok`, `is_edited`.
     Không thay đổi `code`, `form_type_id`, `created_at`.
@@ -363,7 +465,8 @@ def set_record_visibility(
     device = request.headers.get("user-agent")
     audit(admin["id"], "record.hide" if body.is_hidden else "record.show",
           "record", record_id, None, ip, device)
-    return _serialize(_get_record_accessible(record_id, admin))
+    # Trả thông tin quản lý (không có nội dung hồ sơ).
+    return _serialize_admin(_get_record_admin(record_id))
 
 
 @router.get("/{record_id}")
@@ -372,6 +475,7 @@ def get_record(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Chi tiết một hồ sơ (chủ sở hữu / admin)."""
+    """Chi tiết một hồ sơ (CHỈ chủ sở hữu — admin cũng không xem được hồ sơ
+    của người khác)."""
     row = _get_record_accessible(record_id, user)
     return _serialize(row)

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .audit import audit
-from .auth import _validate_username
+from .auth import _validate_password, _validate_username
 from .deps import ROLE_LEVELS, parse_uuid, require_admin
 from .security import hash_password
 
@@ -67,15 +67,96 @@ def _count_active_admins() -> int:
     return int(row["n"])
 
 
+def _client_ip(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+def _get_target(user_id: str) -> tuple[str, dict]:
+    """(id chuẩn hoá, dòng tblUser). Id sai định dạng / không tồn tại → 404."""
+    parsed = parse_uuid(user_id)
+    if parsed is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản")
+    target = db.fetch_one("SELECT * FROM tblUser WHERE id = %s", (parsed,))
+    if target is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản")
+    return parsed, target
+
+
 @router.get("")
 def list_users() -> dict:
-    """Danh sách tài khoản (không trả password_hash)."""
+    """Danh sách tài khoản (không trả password_hash) + số hồ sơ đã tạo."""
     rows = db.fetch_all(
-        "SELECT id, username, email, full_name, role, is_active, "
-        "failed_login_count, locked_until, created_at, updated_at "
-        "FROM tblUser ORDER BY created_at DESC"
+        "SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active, "
+        "u.failed_login_count, u.locked_until, u.created_at, u.updated_at, "
+        "(SELECT COUNT(*) FROM tblScanRecord r WHERE r.user_id = u.id) AS record_count "
+        "FROM tblUser u ORDER BY u.created_at DESC"
     )
     return {"users": rows, "count": len(rows)}
+
+
+@router.get("/{user_id}")
+def get_user(user_id: str) -> dict:
+    """
+    Chi tiết TÀI KHOẢN (admin). Chỉ thông tin tài khoản và hoạt động — KHÔNG có
+    Profile CCCD hay nội dung hồ sơ (admin không được xem thông tin người dùng).
+    """
+    parsed, target = _get_target(user_id)
+    stats = db.fetch_one(
+        "SELECT "
+        "(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s) AS record_count, "
+        "(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s AND is_hidden) "
+        "  AS hidden_record_count, "
+        "(SELECT COUNT(*) FROM tblRefreshToken WHERE user_id = %s "
+        "  AND revoked_at IS NULL AND expires_at > NOW()) AS active_sessions, "
+        "(SELECT MAX(created_at) FROM tblAuditLog WHERE user_id = %s "
+        "  AND action = 'auth.login') AS last_login_at",
+        (parsed, parsed, parsed, parsed),
+    )
+    return {
+        "id": str(target["id"]),
+        "username": target["username"],
+        "email": target["email"],
+        "full_name": target["full_name"],
+        "role": target["role"],
+        "is_active": target["is_active"],
+        "failed_login_count": target["failed_login_count"],
+        "locked_until": target["locked_until"],
+        "created_at": target["created_at"],
+        "updated_at": target["updated_at"],
+        "record_count": int(stats["record_count"] or 0),
+        "hidden_record_count": int(stats["hidden_record_count"] or 0),
+        "active_sessions": int(stats["active_sessions"] or 0),
+        "last_login_at": stats["last_login_at"],
+    }
+
+
+@router.post("/{user_id}/unlock")
+def unlock_user(user_id: str, request: Request, admin: dict = Depends(require_admin)) -> dict:
+    """Gỡ khóa tạm do đăng nhập sai nhiều lần (không đổi trạng thái khóa bởi admin)."""
+    parsed, _ = _get_target(user_id)
+    db.execute(
+        "UPDATE tblUser SET failed_login_count = 0, locked_until = NULL, "
+        "updated_at = NOW() WHERE id = %s",
+        (parsed,),
+    )
+    audit(admin["id"], "user.unlock", "user", parsed, None, _client_ip(request))
+    return {"message": "Đã gỡ khóa đăng nhập tạm thời"}
+
+
+@router.post("/{user_id}/revoke-sessions")
+def revoke_user_sessions(
+    user_id: str, request: Request, admin: dict = Depends(require_admin)
+) -> dict:
+    """Đăng xuất tài khoản khỏi MỌI thiết bị (thu hồi mọi token)."""
+    parsed, _ = _get_target(user_id)
+    if str(parsed) == str(admin["id"]):
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể tự đăng xuất mọi thiết bị ở đây — dùng Đăng xuất",
+        )
+    _revoke_tokens(parsed)
+    audit(admin["id"], "user.revoke_sessions", "user", parsed, None, _client_ip(request))
+    return {"message": "Đã đăng xuất tài khoản khỏi mọi thiết bị"}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -83,8 +164,10 @@ def create_user(body: CreateUserBody, request: Request, admin: dict = Depends(re
     """Admin tạo tài khoản mới (không cần người dùng đăng ký)."""
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Role không hợp lệ (chấp nhận: {', '.join(VALID_ROLES)})")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 8 ký tự")
+    # DEF-17: cùng quy tắc mật khẩu với /auth/register (≥8 ký tự, chữ + số).
+    pw_err = _validate_password(body.password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
 
     username = body.username.strip()
     email = body.email.strip().lower()
@@ -157,8 +240,9 @@ def update_user(
         updates.append("full_name = %s")
         params.append(body.full_name.strip())
     if body.password is not None:
-        if len(body.password) < 8:
-            raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 8 ký tự")
+        pw_err = _validate_password(body.password)
+        if pw_err:
+            raise HTTPException(status_code=400, detail=pw_err)
         updates.append("password_hash = %s")
         params.append(hash_password(body.password))
     if body.role is not None and body.role != target["role"]:
@@ -180,10 +264,13 @@ def update_user(
             [*params, user_id],
         )
 
-    # Role đổi hoặc khóa → vô hiệu toàn bộ phiên của người đó.
+    # Role đổi, khóa/mở khóa HOẶC reset mật khẩu → vô hiệu toàn bộ phiên của
+    # người đó (DEF-38: reset mật khẩu thường dùng để cứu tài khoản bị chiếm,
+    # nên token cũ của kẻ chiếm phải mất hiệu lực).
     changed_privilege = (
         (body.role is not None and body.role != target["role"])
         or (body.is_active is not None and body.is_active != target["is_active"])
+        or (body.password is not None)
     )
     if changed_privilege:
         _revoke_tokens(user_id)
