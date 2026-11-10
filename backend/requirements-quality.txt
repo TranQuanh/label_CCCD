@@ -1,0 +1,6 @@
+# Tuỳ chọn: kiểm tra chất lượng ảnh / phát hiện khung thẻ (backend/image_quality.py,
+# endpoint POST /api/v1/quality-check). Thiếu các gói này backend vẫn chạy,
+# endpoint trả {"available": false}.
+#   pip install -r backend/requirements-quality.txt
+opencv-python-headless>=4.5
+numpy>=1.21

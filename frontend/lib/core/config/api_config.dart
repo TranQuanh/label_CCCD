@@ -23,6 +23,13 @@ class ApiConfig {
   static const String extractPath = '/extract-cccd/';
   static const String healthPath = '/health';
 
+  /// Kiểm tra chất lượng ảnh / khung thẻ (OpenCV) — xem `backend/main.py`
+  /// `@app.post("/api/v1/quality-check")`. Chỉ để cảnh báo, không bắt buộc.
+  static const String qualityCheckPath = '/api/v1/quality-check';
+
+  /// Timeout ngắn cho kiểm tra chất lượng (không retry): quá lâu thì bỏ qua.
+  static const Duration qualityCheckTimeout = Duration(seconds: 15);
+
   /// Tên field multipart mà FastAPI mong đợi: `file: UploadFile = File(...)`.
   static const String fileField = 'file';
 

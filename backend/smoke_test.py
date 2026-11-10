@@ -7,6 +7,8 @@ Cover:
   P1 — register → login sai 5 lần (lock) → login đúng → me → refresh → logout →
        kiểm access cũ bị blacklist → admin tạo user + đổi role → token cũ bị
        từ chối → audit-logs đủ sự kiện.
+  Quality — /api/v1/quality-check: 401 không token, 200 có khóa 'available'
+       (có/không cài OpenCV đều qua), side sai → 400.
   P2 — /forms trả metadata JSONB {key,label,hint}; admin POST/PUT /forms;
        gửi hồ sơ (POST /scan-records) nhận mã server; lịch sử từ PostgreSQL;
        Profile CCCD (/profiles); đổi mật khẩu (bỏ OTP, verify mật khẩu hiện tại).
@@ -74,6 +76,22 @@ def check(name: str, cond: bool, detail: str = "") -> None:
     else:
         FAIL += 1
     print(f"  {mark} {name} {detail}")
+
+
+def _tiny_png(width: int = 64, height: int = 40) -> bytes:
+    """PNG xám 8-bit cố định (sọc dọc) dựng bằng thư viện chuẩn — không cần Pillow."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    row = bytes((x * 4) % 256 for x in range(width))
+    raw = b"".join(b"\x00" + row for _ in range(height))  # filter 0 mỗi dòng
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def main() -> None:
@@ -356,6 +374,20 @@ def _run(client: TestClient) -> None:
                     headers={"Authorization": f"Bearer {admin_access}"})
     check("extract-cccd chưa cấu hình INFERENCE_SERVER_URL → 503",
           r.status_code == 503, str(r.json()))
+
+    print("== /api/v1/quality-check (cảnh báo chất lượng ảnh) ==")
+    png = ("q.png", _tiny_png(), "image/png")
+    r = client.post("/api/v1/quality-check", params={"side": "truoc"}, files={"file": png})
+    check("quality-check không token → 401", r.status_code == 401, str(r.json()))
+    r = client.post("/api/v1/quality-check", params={"side": "truoc"}, files={"file": png},
+                    headers={"Authorization": f"Bearer {admin_access}"})
+    body = r.json()
+    # Không phụ thuộc OpenCV có cài hay không (thiếu → available=false).
+    check("quality-check có token → 200 + khóa 'available'",
+          r.status_code == 200 and "available" in body, str(body)[:160])
+    r = client.post("/api/v1/quality-check", params={"side": "xyz"}, files={"file": png},
+                    headers={"Authorization": f"Bearer {admin_access}"})
+    check("quality-check side=xyz → 400", r.status_code == 400, str(r.json()))
 
     print("== P2: Admin quản lý biểu mẫu (POST/PUT /forms) ==")
     # Đăng ký user1 để test các luồng hồ sơ (role user).

@@ -18,7 +18,7 @@ import requests
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import audit, auth, bootstrap, config, db, forms, profiles, records, redis_client, users
+from . import audit, auth, bootstrap, config, db, forms, image_quality, profiles, records, redis_client, users
 from .deps import get_current_user
 
 INFERENCE_SERVER_URL = config.INFERENCE_SERVER_URL
@@ -153,6 +153,30 @@ def _read_image(file: UploadFile) -> tuple[bytes, str]:
     if ctype in ("", "application/octet-stream"):
         return data, _sniff_image_type(data[:16]) or "application/octet-stream"
     raise HTTPException(status_code=415, detail="Chỉ chấp nhận tệp ảnh (image/*)")
+
+
+@app.post("/api/v1/quality-check")
+def quality_check(
+    file: UploadFile = File(..., description="Ảnh CCCD (jpg/png)"),
+    side: str = Query("auto", description="truoc | sau | auto"),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Kiểm tra chất lượng ảnh + phát hiện khung thẻ (OpenCV) — CHỈ để cảnh báo,
+    không crop / nắn ảnh, không ảnh hưởng /extract-cccd. Chưa cài OpenCV →
+    200 {available: false}. Không ghi ảnh ra đĩa, không log dữ liệu ảnh.
+    """
+    _validate_side(side)
+    file_bytes, _ctype = _read_image(file)
+    if not image_quality.AVAILABLE:
+        return {"available": False, "card_found": None, "issues": []}
+    result = image_quality.analyze(file_bytes)
+    # Chỉ log metadata (mã cảnh báo), không log ảnh / số đo chi tiết.
+    logger.info(
+        f"[QUALITY] side={side} card_found={result.get('card_found')} "
+        f"issues={[i.get('code') for i in result.get('issues', [])]}"
+    )
+    return {**result, "side": side}
 
 
 @app.post("/extract-cccd/")

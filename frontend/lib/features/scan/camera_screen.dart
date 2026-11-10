@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/temp_file_cleaner.dart';
 import '../../core/widgets/scanner_overlay.dart';
 import '../../data/models/form_type.dart';
+import 'capture_review_screen.dart';
 import 'processing_screen.dart';
 
 /// Màn hình 4 — Camera & Quét: chụp mặt trước rồi mặt sau.
@@ -15,6 +17,8 @@ import 'processing_screen.dart';
 /// vào thư mục cache/tmp của app. `ProcessingScreen` xoá hai ảnh này khi trích
 /// xuất thành công, hoặc khi người dùng rời màn xử lý mà chưa thành công
 /// (xem `core/utils/temp_file_cleaner.dart`; chỉ xoá file trong cache/tmp).
+/// Mỗi ảnh đi qua `CaptureReviewScreen` (xem lại + cảnh báo chất lượng); ảnh
+/// bị "Chụp lại" và ảnh mặt trước bị thay khi quay lại bước 1 được xoá ngay.
 class CameraScreen extends StatefulWidget {
   final FormType? formType;
   final bool isProfileScan;
@@ -134,7 +138,7 @@ class _CameraScreenState extends State<CameraScreen> {
     setState(() => _busy = true);
     try {
       final file = await _controller!.takePicture();
-      _accept(file.path);
+      await _accept(file.path);
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -156,7 +160,7 @@ class _CameraScreenState extends State<CameraScreen> {
         if (mounted) setState(() => _busy = false);
         return;
       }
-      _accept(picked.path);
+      await _accept(picked.path);
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -165,9 +169,20 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
-  /// Nhận một ảnh: mặt trước thì giữ lại và chuyển bước, mặt sau thì gửi đi xử lý.
-  void _accept(String path) {
+  /// Nhận một ảnh (chụp hoặc chọn từ thư viện): mở màn xem lại + cảnh báo
+  /// chất lượng trước. Chụp lại → xoá ảnh tạm, ở lại đúng mặt đang chụp.
+  /// Dùng ảnh → mặt trước thì giữ lại và chuyển bước, mặt sau thì gửi đi xử lý.
+  Future<void> _accept(String path) async {
     if (!mounted) return;
+    final use = await Navigator.of(context).push<bool>(MaterialPageRoute<bool>(
+      builder: (_) => CaptureReviewScreen(imagePath: path, isBack: _isBack),
+    ));
+    if (use != true || !mounted) {
+      // Chụp lại (hoặc màn camera đã bị đóng) → ảnh này không dùng nữa.
+      await deleteTempImages([path]);
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
     if (!_isBack) {
       setState(() {
         _frontPath = path;
@@ -195,6 +210,8 @@ class _CameraScreenState extends State<CameraScreen> {
   void _goBack() {
     if (_busy) return;
     if (_isBack) {
+      // Chụp lại mặt trước → ảnh mặt trước cũ không dùng nữa, xoá luôn.
+      unawaited(deleteTempImages([_frontPath]));
       setState(() {
         _isBack = false;
         _frontPath = null;
