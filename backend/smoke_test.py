@@ -408,7 +408,8 @@ def _run(client: TestClient) -> None:
     check("tạo form (admin) → 405 (đã bỏ)", r.status_code == 405, str(r.status_code))
     r = client.put("/api/v1/forms/atm_open", headers={"Authorization": f"Bearer {admin_access}"},
                    json={"name": "Đổi tên"})
-    check("sửa form (admin) → 405 (đã bỏ)", r.status_code == 405, str(r.status_code))
+    # Route PUT /forms/{slug} đã gỡ → không khớp route nào → 404 (DEF-46).
+    check("sửa form (admin) → 404/405 (đã bỏ)", r.status_code in (404, 405), str(r.status_code))
 
     r = client.get("/api/v1/forms/all", headers={"Authorization": f"Bearer {user1_access}"})
     check("GET /forms/all (user) → 403", r.status_code == 403, str(r.json()))
