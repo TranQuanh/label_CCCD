@@ -1,6 +1,7 @@
-# Tuỳ chọn: kiểm tra chất lượng ảnh / phát hiện khung thẻ (backend/image_quality.py,
-# endpoint POST /api/v1/quality-check). Thiếu các gói này backend vẫn chạy,
-# endpoint trả {"available": false}.
+# Tuy chon: kiem tra chat luong anh / phat hien khung the (backend/image_quality.py,
+# endpoint POST /api/v1/quality-check). Thieu cac goi nay backend van chay,
+# endpoint tra {"available": false}.
 #   pip install -r backend/requirements-quality.txt
+# (DEF-45: chi dung ASCII trong file nay - pip tren Windows doc bang cp1252.)
 opencv-python-headless>=4.5
 numpy>=1.21

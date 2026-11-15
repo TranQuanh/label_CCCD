@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid as uuid_mod
+from datetime import timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -82,15 +83,41 @@ def _get_target(user_id: str) -> tuple[str, dict]:
     return parsed, target
 
 
+# ── Thời gian trả cho client (DEF-44) ───────────────────────────────────────
+# Hai loại cột thời gian, xử lý khác nhau:
+#   - Ghi bằng NOW() của PostgreSQL (created_at, updated_at, audit created_at)
+#     → là giờ theo TimeZone của session Postgres → đổi sang timestamptz ngay
+#       trong SQL bằng `AT TIME ZONE current_setting('TimeZone')` (giống
+#       records.py / audit.py).
+#   - Ghi từ Python bằng _now_naive() (locked_until) → luôn là UTC naive → chỉ
+#     cần gắn tzinfo=UTC.
+# Cả hai được trả dạng ISO có offset '+00:00' để app đổi về giờ máy.
+_TZ = "AT TIME ZONE current_setting('TimeZone')"
+
+
+def _iso_utc(value) -> Optional[str]:
+    """datetime aware → ISO UTC '+00:00'; naive coi là UTC; None giữ None."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
 @router.get("")
 def list_users() -> dict:
     """Danh sách tài khoản (không trả password_hash) + số hồ sơ đã tạo."""
     rows = db.fetch_all(
-        "SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active, "
-        "u.failed_login_count, u.locked_until, u.created_at, u.updated_at, "
-        "(SELECT COUNT(*) FROM tblScanRecord r WHERE r.user_id = u.id) AS record_count "
-        "FROM tblUser u ORDER BY u.created_at DESC"
+        f"SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active, "
+        f"u.failed_login_count, u.locked_until, "
+        f"(u.created_at {_TZ}) AS created_at, (u.updated_at {_TZ}) AS updated_at, "
+        f"(SELECT COUNT(*) FROM tblScanRecord r WHERE r.user_id = u.id) AS record_count "
+        f"FROM tblUser u ORDER BY u.created_at DESC"
     )
+    for r in rows:
+        r["locked_until"] = _iso_utc(r.get("locked_until"))
+        r["created_at"] = _iso_utc(r.get("created_at"))
+        r["updated_at"] = _iso_utc(r.get("updated_at"))
     return {"users": rows, "count": len(rows)}
 
 
@@ -102,15 +129,17 @@ def get_user(user_id: str) -> dict:
     """
     parsed, target = _get_target(user_id)
     stats = db.fetch_one(
-        "SELECT "
-        "(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s) AS record_count, "
-        "(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s AND is_hidden) "
-        "  AS hidden_record_count, "
-        "(SELECT COUNT(*) FROM tblRefreshToken WHERE user_id = %s "
-        "  AND revoked_at IS NULL AND expires_at > NOW()) AS active_sessions, "
-        "(SELECT MAX(created_at) FROM tblAuditLog WHERE user_id = %s "
-        "  AND action = 'auth.login') AS last_login_at",
-        (parsed, parsed, parsed, parsed),
+        f"SELECT "
+        f"(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s) AS record_count, "
+        f"(SELECT COUNT(*) FROM tblScanRecord WHERE user_id = %s AND is_hidden) "
+        f"  AS hidden_record_count, "
+        f"(SELECT COUNT(*) FROM tblRefreshToken WHERE user_id = %s "
+        f"  AND revoked_at IS NULL AND expires_at > NOW()) AS active_sessions, "
+        f"(SELECT MAX(created_at) {_TZ} FROM tblAuditLog WHERE user_id = %s "
+        f"  AND action = 'auth.login') AS last_login_at, "
+        f"(SELECT created_at {_TZ} FROM tblUser WHERE id = %s) AS created_at_tz, "
+        f"(SELECT updated_at {_TZ} FROM tblUser WHERE id = %s) AS updated_at_tz",
+        (parsed, parsed, parsed, parsed, parsed, parsed),
     )
     return {
         "id": str(target["id"]),
@@ -120,13 +149,13 @@ def get_user(user_id: str) -> dict:
         "role": target["role"],
         "is_active": target["is_active"],
         "failed_login_count": target["failed_login_count"],
-        "locked_until": target["locked_until"],
-        "created_at": target["created_at"],
-        "updated_at": target["updated_at"],
+        "locked_until": _iso_utc(target["locked_until"]),
+        "created_at": _iso_utc(stats["created_at_tz"]),
+        "updated_at": _iso_utc(stats["updated_at_tz"]),
         "record_count": int(stats["record_count"] or 0),
         "hidden_record_count": int(stats["hidden_record_count"] or 0),
         "active_sessions": int(stats["active_sessions"] or 0),
-        "last_login_at": stats["last_login_at"],
+        "last_login_at": _iso_utc(stats["last_login_at"]),
     }
 
 

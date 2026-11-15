@@ -191,10 +191,12 @@ class _CameraScreenState extends State<CameraScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final picked = await _picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 95,
-      );
+      // DEF-43a: KHÔNG truyền imageQuality — có tham số này image_picker tạo
+      // 2 bản sao (gốc trong cache/<uuid>/ + bản nén cache/scaled_*.jpg) mà app
+      // chỉ nhận đường dẫn bản nén, nên bản gốc (ảnh CCCD) còn sót lại. Không
+      // nén thì chỉ có 1 bản cache/<uuid>/<tên>.jpg và deleteTempImages xoá
+      // được cả thư mục. (Chức năng kiểm tra chất lượng ảnh không liên quan.)
+      final picked = await _picker.pickImage(source: ImageSource.gallery);
       if (picked == null) {
         if (mounted) setState(() => _busy = false);
         return;
