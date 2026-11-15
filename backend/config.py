@@ -9,8 +9,36 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# ── Nạp file backend/.env (nếu có) ─────────────────────────────────────────
+# Bộ đọc tối giản, không cần cài python-dotenv. Mỗi dòng dạng KEY=VALUE; bỏ
+# qua dòng trống và dòng bắt đầu bằng '#'. Biến môi trường đã đặt sẵn (vd.
+# $env:SMTP_USER) được ưu tiên hơn giá trị trong .env.
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+
+
+_load_env_file(ENV_FILE)
 
 # ── Kết nối ────────────────────────────────────────────────────────────────
 DATABASE_URL: str = os.getenv(
@@ -78,6 +106,24 @@ LOCK_MINUTES: int = int(os.getenv("LOCK_MINUTES", "15"))
 EMAIL_VERIFICATION_ENABLED: bool = os.getenv("EMAIL_VERIFICATION_ENABLED", "false").lower() in (
     "1", "true", "yes", "on",
 )
+
+# ── Gửi email (quên mật khẩu) ──────────────────────────────────────────────
+# Đọc từ backend/.env (đã git ignore) — xem mẫu backend/.env.example.
+# Gmail: bật Xác minh 2 bước → tạo App Password 16 ký tự (bỏ dấu cách) tại
+# https://myaccount.google.com/apppasswords rồi điền vào SMTP_PASSWORD.
+# Để SMTP_USER hoặc SMTP_PASSWORD rỗng → KHÔNG gửi mail, mã OTP được in ra
+# console của uvicorn (dùng khi test/demo).
+SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587") or "587")  # 587 = STARTTLS, 465 = SSL
+SMTP_USER: str = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "").replace(" ", "")
+SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "SmartID").strip() or "SmartID"
+SMTP_TIMEOUT_SECONDS: int = 15
+
+# Mã OTP đặt lại mật khẩu
+RESET_CODE_TTL_MIN: int = 10         # mã hết hạn sau 10 phút
+RESET_RESEND_SECONDS: int = 60       # phải chờ 60 giây mới xin mã mới
+RESET_MAX_ATTEMPTS: int = 5          # nhập sai 5 lần → mã bị huỷ
 
 # ── Chế độ chạy ────────────────────────────────────────────────────────────
 # Backend máy cục bộ luôn chạy chế độ Proxy nhẹ (inference xử lý trên Colab GPU)

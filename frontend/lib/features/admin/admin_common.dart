@@ -92,6 +92,12 @@ const Map<String, ActionInfo> _actions = {
       'Đổi mật khẩu', Icons.password, _amber, security: true),
   'auth.change_password_failed': ActionInfo(
       'Đổi mật khẩu thất bại', Icons.password, _red, security: true),
+  'auth.password_reset_request': ActionInfo(
+      'Yêu cầu mã quên mật khẩu', Icons.mail_outline, _blue, security: true),
+  'auth.password_reset': ActionInfo(
+      'Đặt lại mật khẩu qua email', Icons.lock_reset, _amber, security: true),
+  'auth.password_reset_failed': ActionInfo(
+      'Nhập sai mã quên mật khẩu', Icons.lock_reset, _red, security: true),
   'user.create': ActionInfo(
       'Admin tạo tài khoản', Icons.person_add, _amber, security: true),
   'user.update': ActionInfo(

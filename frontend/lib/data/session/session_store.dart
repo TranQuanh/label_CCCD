@@ -707,6 +707,35 @@ class SessionStore extends ChangeNotifier {
     );
   }
 
+  // ── Quên mật khẩu qua email (OTP) ───────────────────────────────────────
+  // Mock: không gọi server, mã hợp lệ luôn là [mockResetCode].
+
+  static const mockResetCode = '123456';
+
+  Future<String> forgotPassword(String email) async {
+    if (ApiConfig.useMock) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return 'Chế độ mock: dùng mã $mockResetCode để đặt lại mật khẩu.';
+    }
+    return _auth.forgotPassword(email);
+  }
+
+  Future<String> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    if (ApiConfig.useMock) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (code != mockResetCode) {
+        throw const ApiException('Mã xác thực không đúng', statusCode: 400);
+      }
+      return 'Đặt lại mật khẩu thành công.';
+    }
+    return _auth.resetPassword(
+        email: email, code: code, newPassword: newPassword);
+  }
+
   static const _recordsNetworkErrorMsg =
       'Không tải được hồ sơ. Kiểm tra kết nối rồi thử lại.';
 

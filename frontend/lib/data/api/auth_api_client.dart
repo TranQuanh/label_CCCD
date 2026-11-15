@@ -382,6 +382,30 @@ class AuthApiClient {
     });
   }
 
+  // ── Quên mật khẩu qua email (OTP) — không cần đăng nhập ─────────────────
+
+  /// Xin mã OTP gửi về email. Server luôn trả cùng một thông báo dù email có
+  /// tồn tại hay không. Trả thông báo của server.
+  Future<String> forgotPassword(String email) async {
+    final body =
+        await _postPublic('/api/v1/auth/forgot-password', {'email': email});
+    return body['message']?.toString() ?? '';
+  }
+
+  /// Đặt lại mật khẩu bằng email + mã OTP. Trả thông báo của server.
+  Future<String> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final body = await _postPublic('/api/v1/auth/reset-password', {
+      'email': email,
+      'code': code,
+      'new_password': newPassword,
+    });
+    return body['message']?.toString() ?? '';
+  }
+
   // ── Profile CCCD (`/api/v1/profiles`, bảng tblCccdProfile) ──────────────
   //
   // Mỗi profile server: `{id, data, created_at, updated_at}` với `data` là map

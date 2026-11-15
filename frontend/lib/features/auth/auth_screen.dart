@@ -5,6 +5,7 @@ import '../../core/validation/validators.dart';
 import '../../data/api/api_exception.dart';
 import '../../data/session/session_store.dart';
 import '../shell/home_shell.dart';
+import 'forgot_password_screen.dart';
 
 /// Màn hình 1 — Đăng nhập / Đăng ký.
 ///
@@ -30,8 +31,11 @@ class _AuthScreenState extends State<AuthScreen> {
   final _fullName = TextEditingController();
   final _email = TextEditingController();
   final _pw = TextEditingController();
+  final _pwConfirm = TextEditingController();
   Map<String, String> _err = {};
   String? _apiError;
+  // Thông báo xanh (vd. sau khi đặt lại mật khẩu thành công).
+  String? _info;
 
   @override
   void dispose() {
@@ -40,7 +44,29 @@ class _AuthScreenState extends State<AuthScreen> {
     _fullName.dispose();
     _email.dispose();
     _pw.dispose();
+    _pwConfirm.dispose();
     super.dispose();
+  }
+
+  Future<void> _openForgotPassword() async {
+    final id = _identifier.text.trim();
+    final email = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) =>
+            ForgotPasswordScreen(initialEmail: id.contains('@') ? id : ''),
+      ),
+    );
+    // Đặt lại thành công → màn quên mật khẩu trả về email đã dùng.
+    if (email != null && mounted) {
+      setState(() {
+        _identifier.text = email;
+        _pw.clear();
+        _err = {};
+        _apiError = null;
+        _info =
+            'Đặt lại mật khẩu thành công. Hãy đăng nhập bằng mật khẩu mới.';
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -53,6 +79,11 @@ class _AuthScreenState extends State<AuthScreen> {
         e['username'] = 'Tên đăng nhập 3–32 ký tự (chữ/số/_), bắt đầu bằng chữ';
       }
       if (!Validators.email(_email.text)) e['email'] = 'Email không hợp lệ';
+      if (_pwConfirm.text.isEmpty) {
+        e['pwConfirm'] = 'Vui lòng nhập lại mật khẩu';
+      } else if (_pwConfirm.text != _pw.text) {
+        e['pwConfirm'] = 'Mật khẩu nhập lại không khớp';
+      }
     } else {
       if (_identifier.text.trim().isEmpty) {
         e['identifier'] = 'Vui lòng nhập email hoặc tên đăng nhập';
@@ -61,6 +92,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() {
       _err = e;
       _apiError = null;
+      _info = null;
     });
     if (e.isNotEmpty) return;
 
@@ -147,6 +179,11 @@ class _AuthScreenState extends State<AuthScreen> {
                                     color: AppColors.cobalt)),
                           ),
                         )),
+                    const SizedBox(height: 15),
+                    _field('Nhập lại mật khẩu', _pwConfirm,
+                        hint: 'Nhập lại mật khẩu ở trên',
+                        error: _err['pwConfirm'],
+                        obscure: !_showPw),
                   ] else ...[
                     _field('Email hoặc tên đăng nhập', _identifier,
                         hint: 'nguyenvana@demo.vn',
@@ -168,6 +205,45 @@ class _AuthScreenState extends State<AuthScreen> {
                                     color: AppColors.cobalt)),
                           ),
                         )),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: _submitting ? null : _openForgotPassword,
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 4),
+                          child: Text('Quên mật khẩu?',
+                              style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.cobalt)),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_info != null) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: AppColors.valid.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: AppColors.valid.withValues(alpha: .35),
+                            width: 1),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.check_circle_outline,
+                            size: 17, color: AppColors.valid),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(_info!,
+                              style: const TextStyle(
+                                  fontSize: 12.5, color: AppColors.ink)),
+                        ),
+                      ]),
+                    ),
                   ],
                   if (_apiError != null) ...[
                     const SizedBox(height: 14),
@@ -264,6 +340,8 @@ class _AuthScreenState extends State<AuthScreen> {
         _register = register;
         _err = {};
         _apiError = null;
+        _info = null;
+        _pwConfirm.clear();
       });
 
   Widget _header(BuildContext context) => Container(

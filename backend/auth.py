@@ -16,15 +16,26 @@ Quy tắc bảo mật (khớp tài liệu):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
 from pydantic import BaseModel, Field
 
-from . import config, db, redis_client
+from . import config, db, mailer, redis_client
 from .audit import DEVICE_INFO_MAX_LEN, IP_MAX_LEN, audit, clip
 from .deps import get_current_user
 from .security import (
@@ -79,6 +90,16 @@ class RefreshBody(BaseModel):
 
 class ChangePasswordBody(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ForgotPasswordBody(BaseModel):
+    email: str = Field(max_length=255)
+
+
+class ResetPasswordBody(BaseModel):
+    email: str = Field(max_length=255)
+    code: str = Field(max_length=16)
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -427,3 +448,161 @@ def change_password(
     audit(user["id"], "auth.change_password", "user", user["id"],
           None, ip, device)
     return {"message": "Đã đổi mật khẩu. Vui lòng đăng nhập lại bằng mật khẩu mới."}
+
+
+# ── Quên mật khẩu qua email (OTP 6 số) ─────────────────────────────────────
+# Lưu mã ngay trên tblUser (3 cột reset_code_hash / reset_expires_at /
+# reset_attempts) — không thêm bảng. Mọi phép so sánh thời gian dùng NOW()
+# của PostgreSQL để không lệch múi giờ giữa Python và DB.
+
+_FORGOT_MSG = (
+    "Nếu email đã đăng ký tài khoản, mã xác thực đã được gửi tới email đó. "
+    "Vui lòng kiểm tra hộp thư (cả mục Spam)."
+)
+_RESET_INVALID_MSG = "Mã xác thực không đúng hoặc đã hết hạn"
+
+
+def _reset_code_hash(user_id, code: str) -> str:
+    """HMAC-SHA256 (khoá = JWT_SECRET) của mã OTP, gắn với user_id.
+    Lộ DB cũng không dò ngược được mã nếu không có secret của server."""
+    msg = f"{user_id}:{code}".encode()
+    return hmac.new(config.JWT_SECRET.encode(), msg, hashlib.sha256).hexdigest()
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    body: ForgotPasswordBody, request: Request, background: BackgroundTasks
+) -> dict:
+    """
+    Bước 1: người dùng nhập email → server gửi mã OTP 6 số (hiệu lực
+    RESET_CODE_TTL_MIN phút).
+
+    Luôn trả CÙNG một thông báo dù email có tồn tại hay không (chống dò tài
+    khoản). Email được gửi ở background sau khi trả response nên thời gian
+    phản hồi cũng không lộ thông tin.
+    """
+    email = body.email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Email không hợp lệ")
+
+    ip, device = _client_meta(request)
+    user = db.fetch_one(
+        "SELECT id, email, full_name, username, is_active FROM tblUser "
+        "WHERE lower(email) = lower(%s)",
+        (email,),
+    )
+    if user is None or not user["is_active"]:
+        audit(None, "auth.password_reset_request", "user",
+              user["id"] if user else None,
+              {"email": email, "sent": False}, ip, device)
+        return {"message": _FORGOT_MSG}
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    ttl = config.RESET_CODE_TTL_MIN
+    # Một câu UPDATE nguyên tử: chỉ ghi mã mới khi mã trước đã được gửi quá
+    # RESET_RESEND_SECONDS giây (thời điểm gửi = reset_expires_at - TTL).
+    row = db.fetch_one(
+        "UPDATE tblUser SET reset_code_hash = %s, "
+        "reset_expires_at = NOW() + make_interval(mins => %s), "
+        "reset_attempts = 0 "
+        "WHERE id = %s AND (reset_expires_at IS NULL OR "
+        "  reset_expires_at - make_interval(mins => %s) "
+        "  + make_interval(secs => %s) <= NOW()) "
+        "RETURNING id",
+        (_reset_code_hash(user["id"], code), ttl, user["id"], ttl,
+         config.RESET_RESEND_SECONDS),
+    )
+    if row is None:
+        # Còn trong thời gian chờ gửi lại → không gửi, vẫn trả thông báo chung.
+        return {"message": _FORGOT_MSG}
+
+    background.add_task(
+        mailer.send_reset_code, user["email"],
+        user["full_name"] or user["username"], code,
+    )
+    audit(user["id"], "auth.password_reset_request", "user", user["id"],
+          {"sent": True}, ip, device)
+    return {"message": _FORGOT_MSG}
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordBody, request: Request) -> dict:
+    """
+    Bước 2: email + mã OTP + mật khẩu mới → đặt lại mật khẩu.
+
+    - Mã sai quá RESET_MAX_ATTEMPTS lần → mã bị huỷ, phải xin mã mới.
+    - Thành công: đổi hash, xoá mã (chỉ dùng 1 lần), gỡ khoá đăng nhập tạm,
+      tăng token_version + thu hồi mọi refresh token (đăng xuất mọi thiết bị).
+    """
+    pw_err = _validate_password(body.new_password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
+
+    email = body.email.strip().lower()
+    code = body.code.strip()
+    ip, device = _client_meta(request)
+
+    user = db.fetch_one(
+        "SELECT id, is_active FROM tblUser WHERE lower(email) = lower(%s)",
+        (email,),
+    )
+    if user is None or not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail=_RESET_INVALID_MSG)
+    if not user["is_active"]:
+        raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
+
+    # Tính 1 lượt thử NGUYÊN TỬ trước khi so mã → request song song không
+    # vượt được giới hạn số lần thử.
+    row = db.fetch_one(
+        "UPDATE tblUser SET reset_attempts = reset_attempts + 1 "
+        "WHERE id = %s AND reset_code_hash IS NOT NULL "
+        "AND reset_expires_at > NOW() AND reset_attempts < %s "
+        "RETURNING reset_code_hash, reset_attempts",
+        (user["id"], config.RESET_MAX_ATTEMPTS),
+    )
+    if row is None:
+        raise HTTPException(status_code=400, detail=_RESET_INVALID_MSG)
+
+    expected = _reset_code_hash(user["id"], code)
+    if not hmac.compare_digest(expected, row["reset_code_hash"]):
+        left = config.RESET_MAX_ATTEMPTS - int(row["reset_attempts"])
+        audit(user["id"], "auth.password_reset_failed", "user", user["id"],
+              {"attempt": int(row["reset_attempts"])}, ip, device)
+        if left <= 0:
+            db.execute(
+                "UPDATE tblUser SET reset_code_hash = NULL, reset_expires_at = NULL "
+                "WHERE id = %s",
+                (user["id"],),
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Nhập sai mã quá nhiều lần. Vui lòng gửi lại mã mới",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mã xác thực không đúng. Còn {left} lần thử",
+        )
+
+    # Đúng mã → đổi mật khẩu; WHERE reset_code_hash = mã vừa khớp để 2 request
+    # cùng mã chỉ một request thành công.
+    with db.get_conn() as conn:
+        updated = conn.execute(
+            "UPDATE tblUser SET password_hash = %s, "
+            "token_version = token_version + 1, "
+            "reset_code_hash = NULL, reset_expires_at = NULL, reset_attempts = 0, "
+            "failed_login_count = 0, locked_until = NULL, updated_at = NOW() "
+            "WHERE id = %s AND reset_code_hash = %s RETURNING id",
+            (hash_password(body.new_password), user["id"], expected),
+        ).fetchone()
+        if updated is None:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=_RESET_INVALID_MSG)
+        conn.execute(
+            "UPDATE tblRefreshToken SET revoked_at = NOW() "
+            "WHERE user_id = %s AND revoked_at IS NULL AND expires_at > NOW()",
+            (user["id"],),
+        )
+        conn.commit()
+
+    audit(user["id"], "auth.password_reset", "user", user["id"], None, ip, device)
+    return {"message": "Đặt lại mật khẩu thành công. Vui lòng đăng nhập bằng mật khẩu mới."}

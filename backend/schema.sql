@@ -36,9 +36,17 @@ CREATE TABLE IF NOT EXISTS tblUser (
     locked_until       TIMESTAMP,
     token_version      INT          NOT NULL DEFAULT 0,   -- tăng khi đổi role → vô hiệu token cũ
     cccd_profile       JSONB,                             -- (DEPRECATED — dùng tblCccdProfile)
+    reset_code_hash    VARCHAR(64),                       -- HMAC-SHA256 của mã OTP quên mật khẩu
+    reset_expires_at   TIMESTAMP,                         -- hạn dùng mã OTP (NULL = không có mã)
+    reset_attempts     INT          NOT NULL DEFAULT 0,   -- số lần nhập sai mã hiện tại
     created_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+
+-- Migration: 3 cột phục vụ quên mật khẩu qua email (OTP), không thêm bảng mới
+ALTER TABLE tblUser ADD COLUMN IF NOT EXISTS reset_code_hash  VARCHAR(64);
+ALTER TABLE tblUser ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMP;
+ALTER TABLE tblUser ADD COLUMN IF NOT EXISTS reset_attempts   INT NOT NULL DEFAULT 0;
 
 -- Migration: thêm cột cccd_profile vào tblUser nếu chưa có
 DO $$
