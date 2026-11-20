@@ -18,7 +18,7 @@ import requests
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import audit, auth, bootstrap, config, db, forms, image_quality, profiles, records, redis_client, users
+from . import audit, auth, bootstrap, config, db, forms, image_quality, mailer, profiles, records, redis_client, users
 from .deps import get_current_user
 
 INFERENCE_SERVER_URL = config.INFERENCE_SERVER_URL
@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
     # (tự bắt lỗi bên trong — không làm sập khởi động).
     bootstrap.bootstrap_admin()
     redis_client.get_redis()
+    mailer.warn_if_unconfigured()
 
     if INFERENCE_SERVER_URL:
         logger.info(f"🚀 Backend sẵn sàng. Chuyển tiếp AI inference lên Colab: {INFERENCE_SERVER_URL}")
@@ -102,6 +103,9 @@ def health() -> dict:
         "inference_server_url": INFERENCE_SERVER_URL,
         "db": db_ok,
         "redis": redis_ok,
+        # DEF-50: SMTP đã cấu hình chưa (false → mã quên mật khẩu không gửi
+        # email được). Không tính vào status để không đổi hành vi cũ.
+        "mail": mailer.smtp_configured(),
     }
 
 

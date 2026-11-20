@@ -469,6 +469,19 @@ def _reset_code_hash(user_id, code: str) -> str:
     return hmac.new(config.JWT_SECRET.encode(), msg, hashlib.sha256).hexdigest()
 
 
+def _check_reset_rate(bucket: str, ip: Optional[str]) -> None:
+    """DEF-49: giới hạn số request quên/đặt lại mật khẩu theo IP → 429."""
+    if redis_client.hit_rate_limit(
+        bucket, ip or "unknown",
+        config.RESET_RATE_LIMIT, config.RESET_RATE_WINDOW_SECONDS,
+    ):
+        minutes = max(1, config.RESET_RATE_WINDOW_SECONDS // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Bạn thao tác quá nhiều lần. Vui lòng thử lại sau {minutes} phút",
+        )
+
+
 @router.post("/forgot-password")
 def forgot_password(
     body: ForgotPasswordBody, request: Request, background: BackgroundTasks
@@ -486,6 +499,7 @@ def forgot_password(
         raise HTTPException(status_code=400, detail="Email không hợp lệ")
 
     ip, device = _client_meta(request)
+    _check_reset_rate("forgot", ip)
     user = db.fetch_one(
         "SELECT id, email, full_name, username, is_active FROM tblUser "
         "WHERE lower(email) = lower(%s)",
@@ -541,15 +555,17 @@ def reset_password(body: ResetPasswordBody, request: Request) -> dict:
     email = body.email.strip().lower()
     code = body.code.strip()
     ip, device = _client_meta(request)
+    _check_reset_rate("reset", ip)
 
     user = db.fetch_one(
         "SELECT id, is_active FROM tblUser WHERE lower(email) = lower(%s)",
         (email,),
     )
+    # DEF-48: KHÔNG kiểm is_active ở đây — trước khi mã được xác nhận, mọi
+    # trường hợp (email không tồn tại, tài khoản bị khoá, mã sai) đều trả
+    # cùng một lỗi 400, không lộ trạng thái tài khoản.
     if user is None or not re.fullmatch(r"\d{6}", code):
         raise HTTPException(status_code=400, detail=_RESET_INVALID_MSG)
-    if not user["is_active"]:
-        raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
 
     # Tính 1 lượt thử NGUYÊN TỬ trước khi so mã → request song song không
     # vượt được giới hạn số lần thử.
@@ -582,6 +598,17 @@ def reset_password(body: ResetPasswordBody, request: Request) -> dict:
             status_code=400,
             detail=f"Mã xác thực không đúng. Còn {left} lần thử",
         )
+
+    # DEF-48: chỉ báo "bị khoá" SAU khi mã đúng (người gửi đã chứng minh sở
+    # hữu email). forgot-password không phát mã cho tài khoản bị khoá, nên
+    # nhánh này chỉ xảy ra khi admin khoá sau lúc mã đã được gửi.
+    if not user["is_active"]:
+        db.execute(
+            "UPDATE tblUser SET reset_code_hash = NULL, reset_expires_at = NULL "
+            "WHERE id = %s",
+            (user["id"],),
+        )
+        raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
 
     # Đúng mã → đổi mật khẩu; WHERE reset_code_hash = mã vừa khớp để 2 request
     # cùng mã chỉ một request thành công.

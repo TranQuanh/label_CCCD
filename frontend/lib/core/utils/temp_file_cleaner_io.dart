@@ -32,6 +32,7 @@ Future<void> deleteTempImages(Iterable<String?> paths) async {
 ///   sau khi chia sẻ vì ứng dụng nhận (Zalo, email…) có thể chưa đọc xong.
 /// - `cache/<uuid>/`: bản sao ảnh image_picker còn sót (ví dụ app bị tắt giữa
 ///   chừng trước khi kịp xoá).
+/// - `cache/CAP<số>.jpg`: ảnh chụp camera còn sót (DEF-47).
 ///
 /// DEF-43b: lấy thư mục cache bằng `getTemporaryDirectory()` của path_provider
 /// (Android: `.../cache`). `Directory.systemTemp` của Dart trên Android lại là
@@ -49,6 +50,14 @@ Future<void> cleanSharedExports() async {
         try {
           await entry.delete(recursive: true);
         } catch (_) {}
+      } else if (entry is File &&
+          _cameraTempPattern.hasMatch(_baseName(entry.path))) {
+        // DEF-47: ảnh plugin camera ghi thẳng vào gốc cache/ (CAP<số>.jpg),
+        // còn sót khi app bị tắt trước lúc người dùng xác nhận/chụp lại. Lúc
+        // khởi động chưa có ảnh nào đang chụp nên xoá an toàn.
+        try {
+          await entry.delete();
+        } catch (_) {}
       }
     }
   } catch (_) {
@@ -62,6 +71,9 @@ final _tempDirPattern =
 final _uuidPattern = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     caseSensitive: false);
+
+/// Tên file ảnh tạm của camera_android: `File.createTempFile("CAP", ".jpg")`.
+final _cameraTempPattern = RegExp(r'^CAP\d+\.jpg$', caseSensitive: false);
 
 bool _isInTempDir(String path) => _tempDirPattern.hasMatch(path);
 

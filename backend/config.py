@@ -124,6 +124,10 @@ SMTP_TIMEOUT_SECONDS: int = 15
 RESET_CODE_TTL_MIN: int = 10         # mã hết hạn sau 10 phút
 RESET_RESEND_SECONDS: int = 60       # phải chờ 60 giây mới xin mã mới
 RESET_MAX_ATTEMPTS: int = 5          # nhập sai 5 lần → mã bị huỷ
+# DEF-49: giới hạn theo IP cho forgot-password / reset-password (mỗi endpoint
+# đếm riêng). Cần Redis; Redis tắt → không giới hạn.
+RESET_RATE_LIMIT: int = 10           # tối đa 10 request ...
+RESET_RATE_WINDOW_SECONDS: int = 600 # ... mỗi 10 phút / IP
 
 # ── Chế độ chạy ────────────────────────────────────────────────────────────
 # Backend máy cục bộ luôn chạy chế độ Proxy nhẹ (inference xử lý trên Colab GPU)

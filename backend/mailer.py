@@ -28,11 +28,35 @@ def smtp_configured() -> bool:
     return bool(config.SMTP_USER and config.SMTP_PASSWORD and config.SMTP_HOST)
 
 
+def _is_production() -> bool:
+    return config.APP_ENV == "production"
+
+
+def warn_if_unconfigured() -> None:
+    """DEF-50: gọi lúc khởi động — báo rõ nếu chưa cấu hình SMTP."""
+    if smtp_configured():
+        logger.info("✓ SMTP đã cấu hình (%s:%s, %s)",
+                    config.SMTP_HOST, config.SMTP_PORT, config.SMTP_USER)
+    elif _is_production():
+        logger.error("SMTP CHƯA cấu hình (SMTP_USER/SMTP_PASSWORD trong "
+                     "backend/.env) → người dùng KHÔNG nhận được mã quên mật khẩu")
+    else:
+        logger.warning("SMTP chưa cấu hình → chế độ dev: mã quên mật khẩu "
+                       "được in ra console thay vì gửi email")
+
+
 def send_email(to: str, subject: str, text: str, html: str | None = None) -> bool:
-    """Gửi một email. Trả True nếu gửi được (hoặc đã in ra log ở chế độ dev)."""
+    """Gửi một email. Trả True nếu gửi được (hoặc đã in ra log ở chế độ dev).
+
+    DEF-50: chưa cấu hình SMTP thì chỉ in nội dung (kèm mã OTP) ra log khi
+    KHÔNG chạy production. APP_ENV=production → ghi ERROR, không kèm nội dung."""
     if not smtp_configured():
+        if _is_production():
+            logger.error("SMTP chưa cấu hình — KHÔNG gửi được email '%s' tới %s",
+                         subject.split(":")[0], to)
+            return False
         logger.warning(
-            "SMTP chưa cấu hình — KHÔNG gửi mail. Nội dung gửi tới %s:\n%s\n%s",
+            "[DEV] SMTP chưa cấu hình — KHÔNG gửi mail. Nội dung gửi tới %s:\n%s\n%s",
             to, subject, text,
         )
         return True

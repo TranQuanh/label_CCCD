@@ -114,3 +114,30 @@ def is_blacklisted(jti: str) -> bool:
         logger.warning("Redis kiểm tra blacklist thất bại: %s", exc)
         _mark_failed()
         return False
+
+
+# Prefix key giới hạn tần suất (DEF-49).
+RATE_LIMIT_PREFIX = "cccd:rl:"
+
+
+def hit_rate_limit(bucket: str, key: str, limit: int, window_seconds: int) -> bool:
+    """Tính 1 lượt cho (bucket, key) trong cửa sổ `window_seconds` giây.
+
+    Trả True nếu ĐÃ VƯỢT `limit` lượt (caller trả 429). Fail-open: Redis tắt/lỗi
+    → không giới hạn (tính năng vẫn chạy, giống blacklist)."""
+    client = get_redis()
+    if client is None:
+        return False
+    redis_key = f"{RATE_LIMIT_PREFIX}{bucket}:{key}"
+    try:
+        count = int(client.incr(redis_key))
+        # Chỉ đặt TTL ở lượt đầu → cửa sổ cố định. Key mất TTL (vd. lỗi giữa
+        # INCR và EXPIRE) thì đặt lại. Không dùng EXPIRE NX vì Redis 3.x
+        # (bản Windows cũ) không hỗ trợ.
+        if count == 1 or client.ttl(redis_key) == -1:
+            client.expire(redis_key, window_seconds)
+        return count > limit
+    except RedisError as exc:
+        logger.warning("Redis rate limit thất bại: %s", exc)
+        _mark_failed()
+        return False
